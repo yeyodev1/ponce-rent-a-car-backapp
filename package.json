@@ -2,7 +2,7 @@
   "name": "ponce-rent-a-car-backapp",
   "version": "1.0.0",
   "private": true,
-  "description": "API de Ponce Rent A Car. Express 5 + Mongoose + TypeScript, desplegada en Vercel.",
+  "description": "API de Ponce's Rent a Car: reservas, flota, mini CRM, WhatsApp Cloud API y Payphone. Express 5 + Mongoose + TypeScript.",
   "main": "dist/index.js",
   "engines": {
     "node": ">=20"
@@ -13,7 +13,10 @@
     "compile": "tsc --watch",
     "start": "node dist/index.js",
     "seed:admin": "ts-node-dev --transpile-only src/scripts/seed-admin.ts",
-    "format": "prettier --write 'src/**/*.{ts,json,md}' 'api/**/*.ts'"
+    "format": "prettier --write 'src/**/*.{ts,json,md}' 'api/**/*.ts'",
+    "seed:catalog": "ts-node-dev --transpile-only src/scripts/seed-catalog.ts",
+    "seed:content": "ts-node-dev --transpile-only src/scripts/seed-content.ts",
+    "seed": "pnpm seed:catalog && pnpm seed:content"
   },
   "dependencies": {
     "axios": "^1.7.9",
