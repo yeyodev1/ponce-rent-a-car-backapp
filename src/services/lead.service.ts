@@ -19,6 +19,7 @@ import { sendCapiEvent } from "./metaCapi.service";
 import { durationLabel, formatShortDate, locationLabel, notifyAdvisor, passengersLabel } from "./leadNotify.service";
 import { getSettings, whatsappLink } from "./settings.service";
 import { emitWebhook } from "./webhook.service";
+import { requireE164 } from "../utils/phone";
 
 type Lang = "es" | "en";
 
@@ -123,8 +124,7 @@ function pickLeadFields(body: Record<string, unknown>): Record<string, unknown> 
   if (has(body, "name")) out.name = str(body.name, 120);
   if (has(body, "phone")) {
     const v = str(body.phone, 30);
-    if (v && digits(v).length < 7) throw new CustomError("El teléfono debe tener al menos 7 dígitos", 400);
-    out.phone = v ? digits(v) : "";
+    out.phone = v ? requireE164(v) : "";
   }
   if (has(body, "email")) {
     const v = str(body.email, 160).toLowerCase();
