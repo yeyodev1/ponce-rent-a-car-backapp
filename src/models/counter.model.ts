@@ -17,10 +17,9 @@ const counterSchema = new Schema<ICounter>({
 export const Counter = mongoose.models.Counter || mongoose.model<ICounter>("Counter", counterSchema);
 
 export async function nextSequence(name: string): Promise<number> {
-  const doc = await Counter.findOneAndUpdate(
-    { _id: name },
-    { $inc: { seq: 1 } },
-    { new: true, upsert: true, setDefaultsOnInsert: true },
-  );
+  // $inc con upsert ignora el default del schema: se siembra 1000 aparte para
+  // que el primer código sea R1001 / PON-1001 y no R1.
+  await Counter.updateOne({ _id: name }, { $setOnInsert: { seq: 1000 } }, { upsert: true });
+  const doc = await Counter.findOneAndUpdate({ _id: name }, { $inc: { seq: 1 } }, { new: true });
   return doc.seq;
 }
