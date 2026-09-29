@@ -6,6 +6,7 @@ import { ClubMember, PartnerApplication } from "../models/partner.model";
 import { isCloudinaryConfigured, uploadImage } from "./cloudinary.service";
 import { createInternalLead, dateRange, digits, escapeRegex, parsePaging } from "./lead.service";
 import { notifyAdvisor } from "./leadNotify.service";
+import { requireE164 } from "../utils/phone";
 
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const MAX_PHOTOS = 5;
@@ -44,9 +45,8 @@ async function resolvePhotos(input: unknown): Promise<string[]> {
 /** POST /public/partners — Socio sobre Ruedas. */
 export async function createPartnerApplication(body: Record<string, unknown>) {
   const name = str(body?.name, 120);
-  const whatsapp = digits(body?.whatsapp);
   if (!name) throw new CustomError("Escribe tu nombre", 400);
-  if (whatsapp.length < 7) throw new CustomError("Escribe un WhatsApp válido (mínimo 7 dígitos)", 400);
+  const whatsapp = requireE164(body?.whatsapp, "WhatsApp");
 
   const currentYear = new Date().getFullYear();
   const yearRaw = Number(body?.year);
@@ -94,10 +94,9 @@ export async function createPartnerApplication(body: Record<string, unknown>) {
 export async function joinRenaissance(body: Record<string, unknown>) {
   const name = str(body?.name, 120);
   const email = str(body?.email, 160).toLowerCase();
-  const phone = digits(body?.phone);
   if (!name) throw new CustomError("Escribe tu nombre", 400);
   if (!EMAIL.test(email)) throw new CustomError("Escribe un correo válido", 400);
-  if (phone && phone.length < 7) throw new CustomError("El teléfono debe tener al menos 7 dígitos", 400);
+  const phone = body?.phone ? requireE164(body.phone) : "";
   const language = str(body?.language, 2) === "en" ? "en" : "es";
 
   await ClubMember.findOneAndUpdate(
