@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { env } from "../config/env";
 import { dbConnect, isConnected } from "../config/mongo";
 import { CustomError } from "../errors/customError.error";
+import * as reservationService from "../services/reservation.service";
 
 const router = Router();
 
@@ -33,6 +34,24 @@ router.get("/ping", soloCron, async (_req, res, next) => {
     }
     console.log("[cron] ping");
     res.status(200).json({ ok: true, at: new Date().toISOString() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * GET /api/cron/expire-holds — vence las pre-reservas sin documentos o sin pago
+ * y devuelve sus unidades al inventario. La disponibilidad ya ignora holds
+ * vencidos; esto deja los estados de reserva y unidad al día para el panel.
+ */
+router.get("/expire-holds", soloCron, async (_req, res, next) => {
+  try {
+    if (!isConnected() && !(await dbConnect())) {
+      throw new CustomError("Sin base de datos", 503);
+    }
+    const result = await reservationService.expireHolds();
+    if (result.expired) console.log(`[cron] holds vencidos: ${result.codes.join(", ")}`);
+    res.status(200).json({ ok: true, ...result, at: new Date().toISOString() });
   } catch (error) {
     next(error);
   }
