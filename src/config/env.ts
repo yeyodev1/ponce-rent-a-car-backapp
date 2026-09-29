@@ -42,4 +42,25 @@ export const env = {
   CLOUDINARY_API_KEY: optional("CLOUDINARY_API_KEY", ""),
   CLOUDINARY_API_SECRET: optional("CLOUDINARY_API_SECRET", ""),
   CRON_SECRET: optional("CRON_SECRET", ""),
+  // Payphone (Cajita de Pagos). Sin ambos, el checkout responde 503 y el sitio sigue funcionando.
+  PAYPHONE_TOKEN: optional("PAYPHONE_TOKEN", ""),
+  PAYPHONE_STORE_ID: optional("PAYPHONE_STORE_ID", ""),
+  // WhatsApp Business Platform / Cloud API + Flows.
+  WHATSAPP_TOKEN: optional("WHATSAPP_TOKEN", ""),
+  WHATSAPP_PHONE_NUMBER_ID: optional("WHATSAPP_PHONE_NUMBER_ID", ""),
+  WHATSAPP_VERIFY_TOKEN: optional("WHATSAPP_VERIFY_TOKEN", ""),
+  WHATSAPP_APP_SECRET: optional("WHATSAPP_APP_SECRET", ""),
+  WHATSAPP_FLOW_ID: optional("WHATSAPP_FLOW_ID", ""),
+  WHATSAPP_FLOW_ID_FULL: optional("WHATSAPP_FLOW_ID_FULL", ""),
+  WHATSAPP_API_VERSION: optional("WHATSAPP_API_VERSION", "v21.0"),
+  // Número del asesor que recibe el resumen del lead (solo dígitos con código de país).
+  ADVISOR_WHATSAPP: optional("ADVISOR_WHATSAPP", ""),
+  ADVISOR_EMAIL: optional("ADVISOR_EMAIL", ""),
+  // Meta Conversions API.
+  META_PIXEL_ID: optional("META_PIXEL_ID", ""),
+  META_CAPI_TOKEN: optional("META_CAPI_TOKEN", ""),
+  META_TEST_EVENT_CODE: optional("META_TEST_EVENT_CODE", ""),
+  // Webhook saliente para un CRM externo (Kommo, HubSpot, Zoho...).
+  WEBHOOK_URL: optional("WEBHOOK_URL", ""),
+  WEBHOOK_SECRET: optional("WEBHOOK_SECRET", ""),
 } as const;
