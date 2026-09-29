@@ -1,0 +1,361 @@
+{
+  "version": "6.0",
+  "screens": [
+    {
+      "id": "TRIP",
+      "title": "Tu viaje · Your trip",
+      "data": {},
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "¿Cuándo necesitas el vehículo?"
+          },
+          {
+            "type": "TextCaption",
+            "text": "When do you need the vehicle?"
+          },
+          {
+            "type": "DatePicker",
+            "name": "start_date",
+            "label": "Fecha de retiro",
+            "required": true,
+            "helper-text": "Pickup date"
+          },
+          {
+            "type": "Dropdown",
+            "name": "start_time",
+            "label": "Hora aproximada",
+            "required": true,
+            "data-source": [
+              {
+                "id": "06:00",
+                "title": "06:00"
+              },
+              {
+                "id": "07:00",
+                "title": "07:00"
+              },
+              {
+                "id": "08:00",
+                "title": "08:00"
+              },
+              {
+                "id": "09:00",
+                "title": "09:00"
+              },
+              {
+                "id": "10:00",
+                "title": "10:00"
+              },
+              {
+                "id": "11:00",
+                "title": "11:00"
+              },
+              {
+                "id": "12:00",
+                "title": "12:00"
+              },
+              {
+                "id": "13:00",
+                "title": "13:00"
+              },
+              {
+                "id": "14:00",
+                "title": "14:00"
+              },
+              {
+                "id": "15:00",
+                "title": "15:00"
+              },
+              {
+                "id": "16:00",
+                "title": "16:00"
+              },
+              {
+                "id": "17:00",
+                "title": "17:00"
+              },
+              {
+                "id": "18:00",
+                "title": "18:00"
+              },
+              {
+                "id": "19:00",
+                "title": "19:00"
+              },
+              {
+                "id": "20:00",
+                "title": "20:00"
+              },
+              {
+                "id": "21:00",
+                "title": "21:00"
+              },
+              {
+                "id": "22:00",
+                "title": "22:00"
+              }
+            ]
+          },
+          {
+            "type": "Dropdown",
+            "name": "duration",
+            "label": "¿Por cuántos días?",
+            "required": true,
+            "data-source": [
+              {
+                "id": "1",
+                "title": "1 día · 1 day"
+              },
+              {
+                "id": "2-3",
+                "title": "2–3 días · days"
+              },
+              {
+                "id": "4-7",
+                "title": "4–7 días · days"
+              },
+              {
+                "id": "8-15",
+                "title": "8–15 días · days"
+              },
+              {
+                "id": "16-30",
+                "title": "16–30 días · days"
+              },
+              {
+                "id": "30+",
+                "title": "Más de 30 · 30+ days"
+              }
+            ]
+          },
+          {
+            "type": "Footer",
+            "label": "Continuar · Continue",
+            "on-click-action": {
+              "name": "navigate",
+              "next": {
+                "type": "screen",
+                "name": "DETAILS"
+              },
+              "payload": {
+                "start_date": "${form.start_date}",
+                "start_time": "${form.start_time}",
+                "duration": "${form.duration}"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "DETAILS",
+      "title": "Entrega · Delivery",
+      "data": {
+        "start_date": {
+          "type": "string",
+          "__example__": "2026-10-05"
+        },
+        "start_time": {
+          "type": "string",
+          "__example__": "10:00"
+        },
+        "duration": {
+          "type": "string",
+          "__example__": "4-7"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "¿Dónde te entregamos el vehículo?"
+          },
+          {
+            "type": "TextCaption",
+            "text": "Where should we deliver the vehicle?"
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "location",
+            "label": "Lugar de entrega",
+            "required": true,
+            "data-source": [
+              {
+                "id": "airport",
+                "title": "Aeropuerto de Guayaquil",
+                "description": "Guayaquil Airport"
+              },
+              {
+                "id": "office",
+                "title": "Nuestra ubicación",
+                "description": "Our location"
+              },
+              {
+                "id": "hotel",
+                "title": "Hotel o domicilio",
+                "description": "Hotel or address"
+              },
+              {
+                "id": "other",
+                "title": "Otro lugar",
+                "description": "Other"
+              }
+            ]
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "passengers",
+            "label": "¿Cuántas personas viajan?",
+            "required": true,
+            "data-source": [
+              {
+                "id": "1-2",
+                "title": "1–2 personas",
+                "description": "1–2 people"
+              },
+              {
+                "id": "3-5",
+                "title": "3–5 personas",
+                "description": "3–5 people"
+              },
+              {
+                "id": "6+",
+                "title": "6 o más",
+                "description": "6+ people"
+              }
+            ]
+          },
+          {
+            "type": "Footer",
+            "label": "Continuar · Continue",
+            "on-click-action": {
+              "name": "navigate",
+              "next": {
+                "type": "screen",
+                "name": "PRIORITY"
+              },
+              "payload": {
+                "start_date": "${data.start_date}",
+                "start_time": "${data.start_time}",
+                "duration": "${data.duration}",
+                "location": "${form.location}",
+                "passengers": "${form.passengers}"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "PRIORITY",
+      "title": "Casi listo · Almost done",
+      "terminal": true,
+      "success": true,
+      "data": {
+        "start_date": {
+          "type": "string",
+          "__example__": "2026-10-05"
+        },
+        "start_time": {
+          "type": "string",
+          "__example__": "10:00"
+        },
+        "duration": {
+          "type": "string",
+          "__example__": "4-7"
+        },
+        "location": {
+          "type": "string",
+          "__example__": "airport"
+        },
+        "passengers": {
+          "type": "string",
+          "__example__": "3-5"
+        }
+      },
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "¿Qué es más importante para ti?"
+          },
+          {
+            "type": "TextCaption",
+            "text": "What matters most to you?"
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "priority",
+            "label": "Elige una / Choose one",
+            "required": true,
+            "data-source": [
+              {
+                "id": "save",
+                "title": "Ahorrar",
+                "description": "Save money"
+              },
+              {
+                "id": "comfort",
+                "title": "Comodidad",
+                "description": "Comfort"
+              },
+              {
+                "id": "space",
+                "title": "Espacio",
+                "description": "Space"
+              },
+              {
+                "id": "specific",
+                "title": "Busco un vehículo específico",
+                "description": "A specific vehicle"
+              },
+              {
+                "id": "none",
+                "title": "No tengo preferencia",
+                "description": "No preference"
+              }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "specific_vehicle",
+            "label": "¿Cuál vehículo?",
+            "input-type": "text",
+            "required": false,
+            "helper-text": "Opcional · Which vehicle? (optional)"
+          },
+          {
+            "type": "TextInput",
+            "name": "name",
+            "label": "Nombre y apellido",
+            "input-type": "text",
+            "required": true,
+            "helper-text": "Full name"
+          },
+          {
+            "type": "Footer",
+            "label": "Enviar · Send",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {
+                "start_date": "${data.start_date}",
+                "start_time": "${data.start_time}",
+                "duration": "${data.duration}",
+                "location": "${data.location}",
+                "passengers": "${data.passengers}",
+                "priority": "${form.priority}",
+                "specific_vehicle": "${form.specific_vehicle}",
+                "name": "${form.name}"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
