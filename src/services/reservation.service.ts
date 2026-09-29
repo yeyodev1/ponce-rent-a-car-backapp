@@ -25,6 +25,7 @@ import { assertObjectId, paged, pageParams, searchRegex } from "./catalog.servic
 import { sendCapiEvent } from "./metaCapi.service";
 import { computeQuote, parseDateInput, parseQuoteInput } from "./pricing.service";
 import { emitWebhook } from "./webhook.service";
+import { requireE164 } from "../utils/phone";
 
 const HOLD_STATUSES = ["pending_documents", "pending_payment"];
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -132,7 +133,6 @@ function parseDriver(raw: any) {
     .replace(/[\s.-]/g, "")
     .toUpperCase();
   const email = String(d.email ?? "").trim().toLowerCase();
-  const phone = String(d.phone ?? "").trim();
 
   if (d.documentType && !["cedula", "passport"].includes(d.documentType)) {
     throw new CustomError("El tipo de documento debe ser cédula o pasaporte", 400);
@@ -145,7 +145,7 @@ function parseDriver(raw: any) {
     throw new CustomError("El número de pasaporte no es válido", 400);
   }
   if (!EMAIL.test(email)) throw new CustomError("Escribe un correo válido", 400);
-  if (phone.replace(/\D/g, "").length < 7) throw new CustomError("Escribe un teléfono válido", 400);
+  const phone = requireE164(d.phone);
 
   return {
     name,
