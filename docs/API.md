@@ -107,6 +107,9 @@ Se llama ANTES de abrir WhatsApp / llamar. Crea o actualiza (si llega `leadId`).
 Reglas: `duration === "30+"` agrega el tag `long_term`. `source === "corporate"` agrega `corporate`.
 `channel === "callback"` exige `phone`. Idempotente por `leadId`.
 
+### `GET /api/public/geo`
+`{ country }` desde el header `x-vercel-ip-country` (vacío en local). Señal secundaria de idioma.
+
 ### `POST /api/public/partners` — Socio sobre Ruedas
 `{ name, whatsapp, city, vehicleType, brand, model, year, photos: string[] (dataURL o URL), language }` → `201 { _id, code }`.
 
