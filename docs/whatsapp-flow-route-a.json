@@ -1,0 +1,66 @@
+{
+  "version": "6.0",
+  "screens": [
+    {
+      "id": "PRIORITY",
+      "title": "Ponce's Rent a Car",
+      "terminal": true,
+      "success": true,
+      "data": {},
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "¿Qué es más importante para ti?"
+          },
+          {
+            "type": "TextCaption",
+            "text": "What matters most to you?"
+          },
+          {
+            "type": "RadioButtonsGroup",
+            "name": "priority",
+            "label": "Elige una / Choose one",
+            "required": true,
+            "data-source": [
+              { "id": "save", "title": "Ahorrar", "description": "Save money" },
+              { "id": "comfort", "title": "Comodidad", "description": "Comfort" },
+              { "id": "space", "title": "Espacio", "description": "Space" },
+              { "id": "specific", "title": "Busco un vehículo específico", "description": "A specific vehicle" },
+              { "id": "none", "title": "No tengo preferencia", "description": "No preference" }
+            ]
+          },
+          {
+            "type": "TextInput",
+            "name": "specific_vehicle",
+            "label": "¿Cuál vehículo?",
+            "input-type": "text",
+            "required": false,
+            "helper-text": "Opcional · Which vehicle? (optional)"
+          },
+          {
+            "type": "TextInput",
+            "name": "name",
+            "label": "Nombre y apellido",
+            "input-type": "text",
+            "required": true,
+            "helper-text": "Full name"
+          },
+          {
+            "type": "Footer",
+            "label": "Enviar · Send",
+            "on-click-action": {
+              "name": "complete",
+              "payload": {
+                "priority": "${form.priority}",
+                "specific_vehicle": "${form.specific_vehicle}",
+                "name": "${form.name}"
+              }
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
