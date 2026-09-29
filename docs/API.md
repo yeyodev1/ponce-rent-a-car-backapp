@@ -97,7 +97,8 @@ Se llama ANTES de abrir WhatsApp / llamar. Crea o actualiza (si llega `leadId`).
   "company": "", "vehicles": 0, "comments": "", // corporate
   "categorySlug": "",                       // opcional
   "attribution": { "utmSource": "", "utmMedium": "", "utmCampaign": "", "utmContent": "", "utmTerm": "",
-                   "fbclid": "", "gclid": "", "referrer": "", "landingPage": "" }
+                   "fbclid": "", "gclid": "", "referrer": "", "landingPage": "" },
+  "eventId": ""                            // opcional: mismo id que el Pixel, para deduplicar en Conversions API
 }
 // 201
 { "_id": "", "code": "R1048", "status": "new", "tags": ["long_term"],
@@ -201,7 +202,7 @@ Listas aceptan `?page=&limit=&q=&status=` y devuelven `{ items, total, page, pag
   leadsByStatus: {status: n}, leadsBySource: [{ source, count }], reservationsByMonth: [{ month: "2026-09", count, revenue }],
   latestReservations: [...5], latestLeads: [...5], fleet: { available, prereserved, reserved, rented, maintenance, blocked } }`
 - Leads: `GET /admin/leads`, `GET /admin/leads/:id`, `PATCH /admin/leads/:id` (`status`, `assignedTo`, `categorySlug`, campos),
-  `POST /admin/leads/:id/notes` `{ text }`, `DELETE /admin/leads/:id`.
+  `POST /admin/leads/:id/notes` `{ text }`, `DELETE /admin/leads/:id` (204). Filtros extra: `source, tag, from, to, needsHuman=true`.
   Estados: `new, contacted, quoted, reserved, delivered, closed, lost`.
 - Reservas: `GET /admin/reservations`, `GET /admin/reservations/:id` (incluye pagos y documentos meta),
   `PATCH /admin/reservations/:id` (`status`, `vehicleId`, `verification`, `verificationNote`, `notes`),
