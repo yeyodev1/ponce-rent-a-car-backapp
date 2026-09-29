@@ -44,7 +44,15 @@ export function createApp() {
   const app = express();
 
   app.use(cors(corsOptions));
-  app.use(express.json({ limit: "50mb" }));
+  // Se guarda el cuerpo crudo: Meta firma el webhook de WhatsApp sobre los bytes exactos.
+  app.use(
+    express.json({
+      limit: "50mb",
+      verify: (req, _res, buf) => {
+        (req as unknown as { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
 
   app.get("/", (_req, res) => {
     res.send("Server is alive");
