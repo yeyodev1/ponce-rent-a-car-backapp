@@ -3,7 +3,7 @@ import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { isConnected } from "../config/mongo";
 import { CustomError } from "../errors/customError.error";
-import { User, IUser } from "../models/user.model";
+import { User, IUser, STAFF_TYPES } from "../models/user.model";
 
 const TOKEN_TTL = "30d";
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
@@ -53,6 +53,10 @@ export async function login(
   const invalido = new CustomError("Correo o contraseña incorrectos", 401);
   if (!user || !user.isActive) throw invalido;
   if (!(await bcrypt.compare(password, user.password))) throw invalido;
+  // Los clientes no tienen panel: ven su reserva con el enlace seguro ?t=.
+  if (!(STAFF_TYPES as readonly string[]).includes(user.accountType)) {
+    throw new CustomError("Esta cuenta no tiene acceso al panel", 403);
+  }
 
   user.lastLoginAt = new Date();
   await user.save();
