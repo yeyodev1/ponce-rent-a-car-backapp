@@ -138,6 +138,19 @@ export async function updateStaff(id: string, body: any, actorId: string) {
   return view(user.toObject());
 }
 
+/**
+ * Borra la cuenta. Reservas y pagos guardan una copia de { id, name, email }
+ * de quien los creó, así que el historial sigue mostrando su nombre.
+ */
+export async function deleteStaff(id: string, actorId: string) {
+  const user = await findStaff(id);
+  if (id === actorId) throw new CustomError("No puedes eliminar tu propia cuenta", 409);
+  if (user.accountType === "admin" && user.isActive && !(await hasOtherActiveAdmin(id))) {
+    throw new CustomError("Debe quedar al menos un administrador activo", 409);
+  }
+  await User.deleteOne({ _id: user._id });
+}
+
 export async function setStaffActive(id: string, isActiveRaw: unknown, actorId: string) {
   if (typeof isActiveRaw !== "boolean")
     throw new CustomError("Indica isActive como true o false", 400);
