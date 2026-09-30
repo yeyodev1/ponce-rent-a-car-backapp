@@ -68,6 +68,11 @@ export interface IReservation {
   amountPaid: number;
   balance: number;
   paymentMode: "deposit" | "full" | "";
+  /** Calculado por el sistema comparando lo pagado contra el total; nunca se edita a mano. */
+  paymentStatus: "pending" | "partial" | "paid" | "refunded";
+  /** web = la creó el cliente; walk_in = la creó el personal en el local. */
+  channel: "web" | "walk_in";
+  createdBy: { id: string; name: string; email: string } | null;
   holdExpiresAt: Date | null;
   documents: { license: boolean; identity: boolean };
   contract: {
@@ -127,6 +132,17 @@ const reservationSchema = new Schema<IReservation>(
     amountPaid: { type: Number, default: 0 },
     balance: { type: Number, default: 0 },
     paymentMode: { type: String, enum: ["deposit", "full", ""], default: "" },
+    paymentStatus: {
+      type: String,
+      enum: ["pending", "partial", "paid", "refunded"],
+      default: "pending",
+      index: true,
+    },
+    channel: { type: String, enum: ["web", "walk_in"], default: "web" },
+    createdBy: {
+      type: new Schema({ id: String, name: String, email: String }, { _id: false }),
+      default: null,
+    },
     holdExpiresAt: { type: Date, default: null },
     documents: {
       license: { type: Boolean, default: false },
