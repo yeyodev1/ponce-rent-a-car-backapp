@@ -275,3 +275,24 @@ Campos nuevos: `fuel` (`gasoline|diesel|hybrid|electric`), `seats`, `mileageKm`,
 - Nueva categoría **lujo** (Lujo / Luxury).
 - `GET /public/categories?from=&to=` (ISO) → `availableUnits` calculado para ese rango.
 - `GET /public/categories/:slug` agrega `units: [{ brand, model, year, transmission, fuel, seats, color, image }]` de unidades activas (sin placa ni datos internos) — dato secundario, la venta sigue siendo por categoría.
+
+---
+
+## 7. v1.2 — "Qué no incluye el sistema todavía" (cerrado)
+
+### Licencia de conducir
+- `driver` (en `POST /public/reservations` y `POST /admin/reservations`) agrega `licenseNumber` (4–20 alfanum.), `licenseExpiresAt` (`YYYY-MM-DD`) y `licenseCountry` (ISO-2, opcional; por defecto el país de residencia). Obligatorios en la web.
+- Regla: la licencia debe estar vigente **hasta la fecha de devolución** (`licenseExpiresAt >= fecha de returnAt en Guayaquil`). Si no: 400 `"Tu licencia vence antes de la devolución del vehículo"` con `errorCode: "license_expired"`.
+- Se guardan en `Customer`. El detalle admin de reserva y de cliente las muestra; el admin puede corregirlas en `PATCH /admin/customers/:id` `{ name?, email?, phone?, licenseNumber?, licenseExpiresAt?, licenseCountry?, notes? }`.
+
+### El cliente actualiza sus datos (sin cuenta)
+- `PATCH /public/reservations/:code/contact?t=` `{ email?, phone? }` (E.164). Permitido mientras la reserva no esté `completed`, `cancelled` ni `expired`. Actualiza el `Customer`. → devuelve la reserva pública.
+- Nombre y documento no se editan (van atados a los documentos verificados): se cambian por el asesor.
+
+### Fotos sin Cloudinary
+- `POST /admin/uploads` (multipart `file`, imagen jpg/png/webp ≤ 8 MB): si Cloudinary está configurado sube allá; si no, guarda en la colección `Media` y devuelve `{ url: "<API_BASE>/api/public/media/<id>", publicId: "media:<id>" }` (URL absoluta usando `API_PUBLIC_URL` o el host del request). Ya no responde 503.
+- `GET /public/media/:id` → la imagen con su `Content-Type` y `Cache-Control: public, max-age=31536000, immutable`.
+- Unidades: `images` editable desde el panel (subir, ordenar, quitar). `units[].image` en el catálogo público toma la primera.
+
+### Eliminar personal
+- `DELETE /admin/staff/:id` (solo admin) → 204. No se puede eliminar a uno mismo ni al último admin activo. Los pagos/reservas conservan el snapshot `registeredBy` / `createdBy`, así que el historial no se pierde.
