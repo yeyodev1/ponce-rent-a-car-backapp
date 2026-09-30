@@ -6,9 +6,14 @@ import { Coverage } from "../models/coverage.model";
 import { Extra } from "../models/extra.model";
 import { Reservation } from "../models/reservation.model";
 import { ISetting, LOCATION_CODES } from "../models/setting.model";
-import { Vehicle, VEHICLE_STATUSES } from "../models/vehicle.model";
+import { FUEL_TYPES, Vehicle, VEHICLE_STATUSES } from "../models/vehicle.model";
 import { slugify } from "../utils/slugify";
-import { activeReservationFilter, countReservableByCategory, overlapFilter } from "./availability.service";
+import {
+  activeReservationFilter,
+  availableCountsByCategory,
+  countReservableByCategory,
+  overlapFilter,
+} from "./availability.service";
 import { uploadBuffer } from "./cloudinary.service";
 import { parseDateInput } from "./pricing.service";
 import { getSettings, updateSettings } from "./settings.service";
@@ -27,7 +32,10 @@ export function searchRegex(q: unknown): RegExp | null {
   return text ? new RegExp(escapeRegex(text.slice(0, 100)), "i") : null;
 }
 
-export function pageParams(query: any, defaultLimit = 20): { page: number; limit: number; skip: number } {
+export function pageParams(
+  query: any,
+  defaultLimit = 20,
+): { page: number; limit: number; skip: number } {
   const page = Math.max(1, Math.floor(Number(query?.page)) || 1);
   const limit = Math.min(200, Math.max(1, Math.floor(Number(query?.limit)) || defaultLimit));
   return { page, limit, skip: (page - 1) * limit };
@@ -38,7 +46,8 @@ export function paged<T>(items: T[], total: number, page: number, limit: number)
 }
 
 export function assertObjectId(id: unknown, what = "registro"): string {
-  if (typeof id !== "string" || !isValidObjectId(id)) throw new CustomError(`No se encontró el ${what}`, 404);
+  if (typeof id !== "string" || !isValidObjectId(id))
+    throw new CustomError(`No se encontró el ${what}`, 404);
   return id;
 }
 
@@ -72,19 +81,61 @@ export async function getPublicConfig() {
   };
 }
 
-export async function listPublicCategories() {
+/**
+ * `?from&to` opcionales: con ambos, `availableUnits` son las libres en ese
+ * rango; sin ellos, las reservables de la categoría (sin mirar el calendario).
+ */
+function parseRange(query: any): { from: Date; to: Date } | null {
+  if (query?.from === undefined && query?.to === undefined) return null;
+  const from = parseDateInput(query?.from);
+  const to = parseDateInput(query?.to);
+  if (!from || !to) throw new CustomError("Indica fechas válidas en from y to", 400);
+  if (to.getTime() <= from.getTime())
+    throw new CustomError("La fecha to debe ser posterior a from", 400);
+  return { from, to };
+}
+
+async function unitCounts(query: any): Promise<Map<string, number>> {
+  const range = parseRange(query);
+  return range ? availableCountsByCategory(range.from, range.to) : countReservableByCategory();
+}
+
+export async function listPublicCategories(query: any = {}) {
   const [categories, counts] = await Promise.all([
     Category.find({ isActive: true }).sort({ order: 1, pricePerDay: 1 }).lean<any[]>(),
-    countReservableByCategory(),
+    unitCounts(query),
   ]);
   return categories.map((c) => ({ ...c, availableUnits: counts.get(String(c._id)) ?? 0 }));
 }
 
-export async function getPublicCategory(slug: string) {
-  const category = await Category.findOne({ slug: String(slug).toLowerCase(), isActive: true }).lean<any>();
+export async function getPublicCategory(slug: string, query: any = {}) {
+  const category = await Category.findOne({
+    slug: String(slug).toLowerCase(),
+    isActive: true,
+  }).lean<any>();
   if (!category) throw new CustomError("Categoría no encontrada", 404);
-  const counts = await countReservableByCategory();
-  return { ...category, availableUnits: counts.get(String(category._id)) ?? 0 };
+  const [counts, vehicles] = await Promise.all([
+    unitCounts(query),
+    // Dato secundario: la venta es por categoría. Sin placa, dueño ni notas internas.
+    Vehicle.find({ category: category._id, isActive: true, status: { $ne: "blocked" } })
+      .select("brand model year transmission fuel seats color images")
+      .sort({ createdAt: 1, _id: 1 })
+      .lean<any[]>(),
+  ]);
+  return {
+    ...category,
+    availableUnits: counts.get(String(category._id)) ?? 0,
+    units: vehicles.map((v) => ({
+      brand: v.brand,
+      model: v.model,
+      year: v.year,
+      transmission: v.transmission,
+      fuel: v.fuel ?? "gasoline",
+      seats: v.seats ?? category.passengers,
+      color: v.color ?? "",
+      image: v.images?.[0] ?? "",
+    })),
+  };
 }
 
 export async function listPublicCoverages() {
@@ -125,7 +176,8 @@ function categoryData(body: any, isCreate: boolean) {
     data.slug = slugify(String(data.slug));
     if (!data.slug) throw new CustomError("La categoría necesita un slug o un nombre", 400);
   }
-  if (isCreate && data.pricePerDay === undefined) throw new CustomError("Indica el precio por día", 400);
+  if (isCreate && data.pricePerDay === undefined)
+    throw new CustomError("Indica el precio por día", 400);
   assertCents(data.pricePerDay, "El precio por día");
   return data;
 }
@@ -178,7 +230,10 @@ export async function adminDeleteCategory(id: string) {
   assertObjectId(id, "la categoría");
   // Borrarla dejaría unidades y reservas apuntando a nada; desactivarla conserva el historial.
   if (await Vehicle.exists({ category: id })) {
-    throw new CustomError("La categoría tiene unidades asociadas: desactívala en lugar de borrarla", 409);
+    throw new CustomError(
+      "La categoría tiene unidades asociadas: desactívala en lugar de borrarla",
+      409,
+    );
   }
   if (await Reservation.exists({ category: id })) {
     throw new CustomError("La categoría tiene reservas: desactívala en lugar de borrarla", 409);
@@ -200,6 +255,10 @@ const VEHICLE_FIELDS = [
   "plate",
   "color",
   "transmission",
+  "fuel",
+  "seats",
+  "mileageKm",
+  "description",
   "images",
   "status",
   "owner",
@@ -224,9 +283,29 @@ async function vehicleData(body: any, isCreate: boolean) {
       throw new CustomError("La categoría indicada no existe", 400);
     }
   }
-  if (data.status !== undefined && !(VEHICLE_STATUSES as readonly string[]).includes(String(data.status))) {
+  if (
+    data.status !== undefined &&
+    !(VEHICLE_STATUSES as readonly string[]).includes(String(data.status))
+  ) {
     throw new CustomError("Estado de unidad inválido", 400);
   }
+  if (data.fuel !== undefined && !(FUEL_TYPES as readonly string[]).includes(String(data.fuel))) {
+    throw new CustomError("El combustible debe ser gasolina, diésel, híbrido o eléctrico", 400);
+  }
+  if (
+    data.seats !== undefined &&
+    (!Number.isInteger(data.seats) || (data.seats as number) < 1 || (data.seats as number) > 60)
+  ) {
+    throw new CustomError("Los asientos deben ser un número entero entre 1 y 60", 400);
+  }
+  if (
+    data.mileageKm !== undefined &&
+    (!Number.isInteger(data.mileageKm) || (data.mileageKm as number) < 0)
+  ) {
+    throw new CustomError("El kilometraje debe ser un número entero mayor o igual a 0", 400);
+  }
+  if (data.description !== undefined)
+    data.description = String(data.description ?? "").slice(0, 3000);
   return data;
 }
 
@@ -307,8 +386,15 @@ export async function adminAvailability(query: any) {
   if (to.getTime() <= from.getTime()) throw new CustomError("El rango de fechas no es válido", 400);
 
   const [vehicles, reservations] = await Promise.all([
-    Vehicle.find({ isActive: true }).populate("category", "slug name order").sort({ plate: 1 }).lean<any[]>(),
-    Reservation.find({ ...activeReservationFilter(), ...overlapFilter(from, to), vehicle: { $ne: null } })
+    Vehicle.find({ isActive: true })
+      .populate("category", "slug name order")
+      .sort({ plate: 1 })
+      .lean<any[]>(),
+    Reservation.find({
+      ...activeReservationFilter(),
+      ...overlapFilter(from, to),
+      vehicle: { $ne: null },
+    })
       .select("code status vehicle pickupAt returnAt")
       .sort({ pickupAt: 1 })
       .lean<any[]>(),
@@ -318,7 +404,12 @@ export async function adminAvailability(query: any) {
     vehicle,
     busy: reservations
       .filter((r) => String(r.vehicle) === String(vehicle._id))
-      .map((r) => ({ from: r.pickupAt, to: r.returnAt, reservationCode: r.code, status: r.status })),
+      .map((r) => ({
+        from: r.pickupAt,
+        to: r.returnAt,
+        reservationCode: r.code,
+        status: r.status,
+      })),
   }));
 }
 
@@ -360,7 +451,10 @@ function codeData(body: any, fields: readonly string[], isCreate: boolean, price
   if (data.pricing !== undefined && !["per_day", "per_rental"].includes(String(data.pricing))) {
     throw new CustomError("El tipo de cobro debe ser por día o por alquiler", 400);
   }
-  if (data.maxQuantity !== undefined && (!Number.isInteger(data.maxQuantity) || (data.maxQuantity as number) < 1)) {
+  if (
+    data.maxQuantity !== undefined &&
+    (!Number.isInteger(data.maxQuantity) || (data.maxQuantity as number) < 1)
+  ) {
     throw new CustomError("La cantidad máxima debe ser un entero mayor o igual a 1", 400);
   }
   return data;
@@ -383,7 +477,10 @@ async function listByCode(model: any, query: any) {
 /** Solo puede haber una cobertura por defecto: la que queda marcada desmarca las demás. */
 async function keepSingleDefault(coverage: any) {
   if (coverage?.isDefault) {
-    await Coverage.updateMany({ _id: { $ne: coverage._id }, isDefault: true }, { $set: { isDefault: false } });
+    await Coverage.updateMany(
+      { _id: { $ne: coverage._id }, isDefault: true },
+      { $set: { isDefault: false } },
+    );
   }
 }
 
@@ -396,7 +493,9 @@ export async function adminGetCoverage(id: string) {
 }
 
 export async function adminCreateCoverage(body: any) {
-  const doc = (await Coverage.create(codeData(body, COVERAGE_FIELDS, true, "pricePerDay"))).toObject();
+  const doc = (
+    await Coverage.create(codeData(body, COVERAGE_FIELDS, true, "pricePerDay"))
+  ).toObject();
   await keepSingleDefault(doc);
   return doc;
 }
@@ -499,16 +598,23 @@ export async function adminUpdateSettings(body: any) {
     if (booking.holdMinutes !== undefined && booking.holdMinutes < 5) {
       throw new CustomError("La pre-reserva debe durar al menos 5 minutos", 400);
     }
-    if (booking.depositMode !== undefined && !["fixed", "percent", "none"].includes(booking.depositMode)) {
+    if (
+      booking.depositMode !== undefined &&
+      !["fixed", "percent", "none"].includes(booking.depositMode)
+    ) {
       throw new CustomError("El modo de depósito debe ser fijo, porcentaje o ninguno", 400);
     }
     const mode = booking.depositMode ?? current.booking.depositMode;
     const value = booking.depositValue ?? current.booking.depositValue;
-    if (mode === "percent" && value > 100) throw new CustomError("El porcentaje de depósito no puede superar 100", 400);
+    if (mode === "percent" && value > 100)
+      throw new CustomError("El porcentaje de depósito no puede superar 100", 400);
 
     if (b.mileage && typeof b.mileage === "object") {
       // Se mezcla con lo guardado: updateSettings reemplaza el subobjeto completo.
-      const mileage = { ...current.booking.mileage, ...pick(b.mileage, ["limitedKmPerDay", "extraKmPrice", "unlimitedPricePerDay"]) };
+      const mileage = {
+        ...current.booking.mileage,
+        ...pick(b.mileage, ["limitedKmPerDay", "extraKmPrice", "unlimitedPricePerDay"]),
+      };
       assertNonNegativeInt(mileage.limitedKmPerDay, "Los km incluidos por día");
       assertCents(mileage.extraKmPrice, "El precio por km adicional");
       assertCents(mileage.unlimitedPricePerDay, "El precio del kilometraje ilimitado");
@@ -516,7 +622,8 @@ export async function adminUpdateSettings(body: any) {
     }
 
     if (booking.locations !== undefined) {
-      if (!Array.isArray(booking.locations)) throw new CustomError("Las ubicaciones deben ser una lista", 400);
+      if (!Array.isArray(booking.locations))
+        throw new CustomError("Las ubicaciones deben ser una lista", 400);
       for (const l of booking.locations) {
         if (!(LOCATION_CODES as readonly string[]).includes(l?.code)) {
           throw new CustomError(`Ubicación desconocida: ${l?.code}`, 400);
@@ -539,7 +646,7 @@ export async function adminUpdateSettings(body: any) {
 }
 
 export async function adminUpload(file: Express.Multer.File | undefined) {
-  if (!file) throw new CustomError("Adjunta un archivo en el campo \"file\"", 400);
+  if (!file) throw new CustomError('Adjunta un archivo en el campo "file"', 400);
   if (!/^image\//.test(file.mimetype)) throw new CustomError("Solo se aceptan imágenes", 400);
   return uploadBuffer(file.buffer, "ponce-rent-a-car");
 }
