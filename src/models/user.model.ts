@@ -1,7 +1,9 @@
 import bcrypt from "bcryptjs";
 import mongoose, { Schema } from "mongoose";
 
-export const ACCOUNT_TYPES = ["customer", "admin"] as const;
+// employee = operación diaria; admin = además elimina vehículos y gestiona al personal.
+export const ACCOUNT_TYPES = ["customer", "employee", "admin"] as const;
+export const STAFF_TYPES = ["employee", "admin"] as const;
 export type AccountType = (typeof ACCOUNT_TYPES)[number];
 
 export interface IUser {
