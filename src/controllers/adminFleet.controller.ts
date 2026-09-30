@@ -1,5 +1,8 @@
 import { Request, Response, NextFunction } from "express";
+import { env } from "../config/env";
 import * as catalogService from "../services/catalog.service";
+import * as mediaService from "../services/media.service";
+import { AuthRequest } from "../types/AuthRequest";
 
 /** Envuelve un handler que solo delega al service: evita repetir try/catch en cada CRUD. */
 function handle(fn: (req: Request) => Promise<unknown>, status = 200) {
@@ -18,7 +21,9 @@ const id = (req: Request) => String(req.params.id);
 export const listCategories = handle((req) => catalogService.adminListCategories(req.query));
 export const getCategory = handle((req) => catalogService.adminGetCategory(id(req)));
 export const createCategory = handle((req) => catalogService.adminCreateCategory(req.body), 201);
-export const updateCategory = handle((req) => catalogService.adminUpdateCategory(id(req), req.body));
+export const updateCategory = handle((req) =>
+  catalogService.adminUpdateCategory(id(req), req.body),
+);
 export const deleteCategory = handle((req) => catalogService.adminDeleteCategory(id(req)));
 
 // Unidades
@@ -26,7 +31,9 @@ export const listVehicles = handle((req) => catalogService.adminListVehicles(req
 export const getVehicle = handle((req) => catalogService.adminGetVehicle(id(req)));
 export const createVehicle = handle((req) => catalogService.adminCreateVehicle(req.body), 201);
 export const updateVehicle = handle((req) => catalogService.adminUpdateVehicle(id(req), req.body));
-export const setVehicleStatus = handle((req) => catalogService.adminSetVehicleStatus(id(req), req.body?.status));
+export const setVehicleStatus = handle((req) =>
+  catalogService.adminSetVehicleStatus(id(req), req.body?.status),
+);
 export const deleteVehicle = handle((req) => catalogService.adminDeleteVehicle(id(req)));
 export const availability = handle((req) => catalogService.adminAvailability(req.query));
 
@@ -34,7 +41,9 @@ export const availability = handle((req) => catalogService.adminAvailability(req
 export const listCoverages = handle((req) => catalogService.adminListCoverages(req.query));
 export const getCoverage = handle((req) => catalogService.adminGetCoverage(id(req)));
 export const createCoverage = handle((req) => catalogService.adminCreateCoverage(req.body), 201);
-export const updateCoverage = handle((req) => catalogService.adminUpdateCoverage(id(req), req.body));
+export const updateCoverage = handle((req) =>
+  catalogService.adminUpdateCoverage(id(req), req.body),
+);
 export const deleteCoverage = handle((req) => catalogService.adminDeleteCoverage(id(req)));
 
 // Extras
@@ -48,5 +57,17 @@ export const deleteExtra = handle((req) => catalogService.adminDeleteExtra(id(re
 export const getSettings = handle(() => catalogService.adminGetSettings());
 export const updateSettings = handle((req) => catalogService.adminUpdateSettings(req.body));
 
+/** Base absoluta del API: la URL de la imagen se guarda tal cual en categorías, unidades y contenido. */
+const publicBaseUrl = (req: Request) =>
+  env.API_PUBLIC_URL || `${req.protocol}://${req.get("host")}`;
+
 /** POST /api/admin/uploads — multipart `file` → { url, publicId } */
-export const upload = handle((req) => catalogService.adminUpload(req.file), 201);
+export const upload = handle(
+  (req) =>
+    mediaService.uploadPublicImage(
+      req.file,
+      publicBaseUrl(req),
+      (req as AuthRequest).user?.email ?? "",
+    ),
+  201,
+);
