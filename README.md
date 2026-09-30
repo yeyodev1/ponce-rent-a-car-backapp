@@ -2,6 +2,17 @@
 
 Express 5 + Mongoose + TypeScript. Se despliega en Vercel como función serverless.
 
+## Producción
+
+| | |
+|---|---|
+| API | https://ponce-rent-a-car-backapp.vercel.app/api (estado: `/api/health`) |
+| Sitio | https://ponce-rent-a-car-frontapp.vercel.app |
+| Repo del frontend | https://github.com/yeyodev1/ponce-rent-a-car-frontapp |
+
+Cada push a `main` despliega a producción en Vercel. Contrato del API en `docs/API.md`,
+despliegue y hosting en `docs/DEPLOY.md`, WhatsApp en `docs/WHATSAPP.md`.
+
 ## Setup local
 
 ```bash
