@@ -13,6 +13,10 @@ export interface ICustomer {
   phone: string;
   country: string;
   birthDate: string;
+  /** Licencia de conducir: debe estar vigente hasta la devolución del vehículo. */
+  licenseNumber: string;
+  licenseExpiresAt: string;
+  licenseCountry: string;
   language: "es" | "en";
   verification: "pending" | "verified" | "needs_info" | "rejected";
   isClubMember: boolean;
@@ -29,6 +33,9 @@ const customerSchema = new Schema<ICustomer>(
     phone: { type: String, default: "", trim: true },
     country: { type: String, default: "EC" },
     birthDate: { type: String, default: "" },
+    licenseNumber: { type: String, default: "", trim: true, uppercase: true },
+    licenseExpiresAt: { type: String, default: "" }, // YYYY-MM-DD
+    licenseCountry: { type: String, default: "" },
     language: { type: String, enum: ["es", "en"], default: "es" },
     verification: {
       type: String,
