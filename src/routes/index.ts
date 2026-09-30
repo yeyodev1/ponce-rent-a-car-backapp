@@ -6,6 +6,7 @@ import catalogRoutes from "./catalog.routes";
 import bookingRoutes from "./booking.routes";
 import contentRoutes from "./content.routes";
 import leadRoutes from "./lead.routes";
+import mediaRoutes from "./media.routes";
 import whatsappRoutes from "./whatsapp.routes";
 import adminFleetRoutes from "./adminFleet.routes";
 import adminBookingRoutes from "./adminBooking.routes";
@@ -28,6 +29,7 @@ function routerApi(app: Application) {
   router.use("/public", bookingRoutes);
   router.use("/public", contentRoutes);
   router.use("/public", leadRoutes);
+  router.use("/public", mediaRoutes);
   router.use("/whatsapp", whatsappRoutes);
 
   // Admin: sesión + personal se validan una sola vez aquí (authMiddleware consulta
