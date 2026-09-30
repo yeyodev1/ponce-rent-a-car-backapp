@@ -25,6 +25,7 @@ import { assertObjectId, paged, pageParams, searchRegex } from "./catalog.servic
 import { sendCapiEvent } from "./metaCapi.service";
 import { computeQuote, parseDateInput, parseQuoteInput, QuoteInput } from "./pricing.service";
 import { emitWebhook } from "./webhook.service";
+import { assertLicenseCovers, parseDriverLicense } from "../utils/license";
 import { requireE164 } from "../utils/phone";
 
 const HOLD_STATUSES = ["pending_documents", "pending_payment"];
@@ -114,7 +115,7 @@ async function expireIfStale(reservation: any) {
 export async function publicView(reservation: any) {
   const [category, customer] = await Promise.all([
     Category.findById(reservation.category).select("slug name image").lean<any>(),
-    Customer.findById(reservation.customer).select("name email").lean<any>(),
+    Customer.findById(reservation.customer).select("name email phone").lean<any>(),
   ]);
   return {
     code: reservation.code,
@@ -136,7 +137,12 @@ export async function publicView(reservation: any) {
     balance: reservation.balance,
     paymentMode: reservation.paymentMode,
     guaranteeAmount: reservation.pricing?.guaranteeAmount ?? 0,
-    driver: { name: customer?.name ?? "", email: customer?.email ?? "" },
+    // phone: el cliente lo ve para confirmar o corregir su contacto desde el enlace seguro.
+    driver: {
+      name: customer?.name ?? "",
+      email: customer?.email ?? "",
+      phone: customer?.phone ?? "",
+    },
     documents: reservation.documents,
     holdExpiresAt: reservation.holdExpiresAt,
     contract: reservation.contract,
@@ -152,7 +158,8 @@ export async function getPublicReservation(code: string, token: string) {
 // Crear reserva (Ruta B)
 // ---------------------------------------------------------------------------
 
-function parseDriver(raw: any) {
+/** `requireLicense`: la web la exige; la presencial la valida solo si llega. */
+function parseDriver(raw: any, requireLicense: boolean) {
   const d = raw ?? {};
   const name = String(d.name ?? "").trim();
   const documentType = d.documentType === "passport" ? "passport" : "cedula";
@@ -175,6 +182,11 @@ function parseDriver(raw: any) {
   }
   if (!EMAIL.test(email)) throw new CustomError("Escribe un correo válido", 400);
   const phone = requireE164(d.phone);
+  const country =
+    String(d.country ?? "EC")
+      .trim()
+      .toUpperCase()
+      .slice(0, 2) || "EC";
 
   return {
     name,
@@ -182,12 +194,9 @@ function parseDriver(raw: any) {
     documentNumber,
     email,
     phone,
-    country:
-      String(d.country ?? "EC")
-        .trim()
-        .toUpperCase()
-        .slice(0, 2) || "EC",
+    country,
     birthDate: String(d.birthDate ?? "").trim(),
+    license: parseDriverLicense(d, country, requireLicense),
   };
 }
 
@@ -209,6 +218,7 @@ async function upsertCustomer(driver: ReturnType<typeof parseDriver>, language: 
       country: driver.country,
       language,
       ...(driver.birthDate ? { birthDate: driver.birthDate } : {}),
+      ...(driver.license ?? {}),
     },
   };
   try {
@@ -333,7 +343,8 @@ export async function createReservation(
   meta: RequestMeta,
 ): Promise<{ created: boolean; reservation: ReturnType<typeof createResponse> }> {
   const input = parseQuoteInput(body);
-  const driver = parseDriver(body?.driver);
+  const driver = parseDriver(body?.driver, true);
+  assertLicenseCovers(driver.license, input.returnAt);
   const language: "es" | "en" = body?.language === "en" ? "en" : "es";
 
   // Anti-duplicado antes de cotizar: la reserva existente ocupa la unidad y la
@@ -407,7 +418,8 @@ export async function createReservation(
  */
 export async function adminCreateReservation(body: any, staff: StaffRef) {
   const input = parseQuoteInput(body);
-  const driver = parseDriver(body?.driver);
+  const driver = parseDriver(body?.driver, false);
+  assertLicenseCovers(driver.license, input.returnAt);
   const language: "es" | "en" = body?.language === "en" ? "en" : "es";
   const computed = await quoteForBooking(input, "staff");
   const { category } = computed;
