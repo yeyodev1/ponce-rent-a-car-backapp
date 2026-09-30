@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import * as customerService from "../services/customer.service";
 import * as documentService from "../services/document.service";
 import * as paymentService from "../services/payment.service";
 import * as reservationService from "../services/reservation.service";
@@ -37,6 +38,9 @@ export const updateReservation = handle((req) =>
 
 export const listCustomers = handle((req) => reservationService.adminListCustomers(req.query));
 export const getCustomer = handle((req) => reservationService.adminGetCustomer(id(req)));
+export const updateCustomer = handle((req) =>
+  customerService.adminUpdateCustomer(id(req), req.body),
+);
 
 export const addPayment = handle(
   (req) => paymentService.addManualPayment(id(req), req.body, staffOf(req)),
