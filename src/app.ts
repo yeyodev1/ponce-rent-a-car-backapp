@@ -42,6 +42,8 @@ const corsOptions: cors.CorsOptions = {
 
 export function createApp() {
   const app = express();
+  // Vercel termina TLS en su proxy: sin esto req.protocol sería "http" y las URLs de /public/media saldrían mal.
+  app.set("trust proxy", 1);
 
   app.use(cors(corsOptions));
   // Se guarda el cuerpo crudo: Meta firma el webhook de WhatsApp sobre los bytes exactos.
