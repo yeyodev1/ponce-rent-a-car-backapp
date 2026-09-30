@@ -1,9 +1,11 @@
 import { Request, Response, NextFunction } from "express";
 import * as documentService from "../services/document.service";
+import * as paymentService from "../services/payment.service";
 import * as reservationService from "../services/reservation.service";
+import { AuthRequest } from "../types/AuthRequest";
 
-function handle(fn: (req: Request) => Promise<unknown>, status = 200) {
-  return async (req: Request, res: Response, next: NextFunction) => {
+function handle(fn: (req: AuthRequest) => Promise<unknown>, status = 200) {
+  return async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       res.status(status).json(await fn(req));
     } catch (error) {
@@ -14,14 +16,34 @@ function handle(fn: (req: Request) => Promise<unknown>, status = 200) {
 
 const id = (req: Request) => String(req.params.id);
 
-export const listReservations = handle((req) => reservationService.adminListReservations(req.query));
+/** Quién hizo la acción, tal como queda guardado en la reserva o el pago. */
+const staffOf = (req: AuthRequest): reservationService.StaffRef => ({
+  id: String(req.user?.userId ?? ""),
+  name: req.user?.name ?? "",
+  email: req.user?.email ?? "",
+});
+
+export const listReservations = handle((req) =>
+  reservationService.adminListReservations(req.query),
+);
 export const getReservation = handle((req) => reservationService.adminGetReservation(id(req)));
-export const updateReservation = handle((req) => reservationService.adminUpdateReservation(id(req), req.body));
+export const createReservation = handle(
+  (req) => reservationService.adminCreateReservation(req.body, staffOf(req)),
+  201,
+);
+export const updateReservation = handle((req) =>
+  reservationService.adminUpdateReservation(id(req), req.body),
+);
 
 export const listCustomers = handle((req) => reservationService.adminListCustomers(req.query));
 export const getCustomer = handle((req) => reservationService.adminGetCustomer(id(req)));
 
+export const addPayment = handle(
+  (req) => paymentService.addManualPayment(id(req), req.body, staffOf(req)),
+  201,
+);
 export const listPayments = handle((req) => reservationService.adminListPayments(req.query));
+export const refundPayment = handle((req) => paymentService.refundPayment(id(req)));
 
 /** GET /api/admin/reservations/:id/documents/:kind — archivo binario para verlo en el navegador. */
 export async function getDocument(req: Request, res: Response, next: NextFunction) {
