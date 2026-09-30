@@ -2,7 +2,8 @@ import { Lead, LEAD_STATUSES } from "../models/lead.model";
 import { Payment } from "../models/payment.model";
 import { Reservation } from "../models/reservation.model";
 import { Vehicle, VEHICLE_STATUSES } from "../models/vehicle.model";
-import { fromLocal, localParts } from "./pricing.service";
+import { activeReservationFilter, overlapFilter } from "./availability.service";
+import { formatLocal, fromLocal, localParts } from "./pricing.service";
 import { expireHolds } from "./reservation.service";
 
 /** Una reserva "cuenta" cuando se pagó; los holds vencidos o cancelados no son ventas. */
@@ -13,12 +14,50 @@ function monthStart(year: number, month: number): Date {
   return fromLocal(year, month, 1);
 }
 
+/**
+ * Ingreso neto de un rango: pagos cobrados en el rango (Payphone + manuales,
+ * incluidos los que luego se reembolsaron) menos los reembolsos hechos en el
+ * rango. Así un reembolso resta en el mes en que ocurre, no en el del cobro.
+ */
 async function revenueBetween(from: Date, to: Date): Promise<number> {
-  const [row] = await Payment.aggregate<{ total: number }>([
-    { $match: { status: "approved", approvedAt: { $gte: from, $lt: to } } },
-    { $group: { _id: null, total: { $sum: "$amount" } } },
+  const [charged, refunded] = await Promise.all([
+    Payment.aggregate<{ total: number }>([
+      {
+        $match: { status: { $in: ["approved", "refunded"] }, approvedAt: { $gte: from, $lt: to } },
+      },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]),
+    Payment.aggregate<{ total: number }>([
+      { $match: { status: "refunded", refundedAt: { $gte: from, $lt: to } } },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]),
   ]);
-  return row?.total ?? 0;
+  return (charged[0]?.total ?? 0) - (refunded[0]?.total ?? 0);
+}
+
+/** Retiros o devoluciones de hoy para la tarjeta "Hoy" del panel. */
+function todayRow(r: any, kind: "pickup" | "return") {
+  const at: Date = kind === "pickup" ? r.pickupAt : r.returnAt;
+  return {
+    _id: r._id,
+    code: r.code,
+    status: r.status,
+    customerName: r.customer?.name ?? "",
+    customerPhone: r.customer?.phone ?? "",
+    categorySlug: r.categorySlug,
+    categoryName: r.categoryName,
+    vehicle: r.vehicle
+      ? {
+          _id: r.vehicle._id,
+          plate: r.vehicle.plate,
+          brand: r.vehicle.brand,
+          model: r.vehicle.model,
+        }
+      : null,
+    at,
+    time: formatLocal(at).slice(11, 16),
+    location: kind === "pickup" ? r.pickupLocation : r.returnLocation,
+  };
 }
 
 export async function getDashboard() {
@@ -32,6 +71,12 @@ export async function getDashboard() {
   const yearAgo = monthStart(year, month - 11);
 
   const between = (from: Date, to: Date) => ({ createdAt: { $gte: from, $lt: to } });
+  const { day } = localParts(now);
+  const todayStart = fromLocal(year, month, day);
+  const todayEnd = fromLocal(year, month, day + 1);
+  const ON_ROAD = ["confirmed", "delivered"];
+  const todaySelect =
+    "code status categorySlug categoryName pickupAt returnAt pickupLocation returnLocation customer vehicle";
 
   const [
     leadsMonth,
@@ -47,24 +92,45 @@ export async function getDashboard() {
     latestReservations,
     latestLeads,
     fleetRows,
+    activeVehicles,
+    busyToday,
+    pendingCount,
+    confirmedCount,
+    inProgressCount,
+    deliveriesToday,
+    returnsToday,
+    revenueByMonthRefunds,
   ] = await Promise.all([
     Lead.countDocuments(between(thisMonth, nextMonth)),
     Lead.countDocuments(between(prevMonth, thisMonth)),
-    Reservation.countDocuments({ ...between(thisMonth, nextMonth), status: { $in: SOLD_STATUSES } }),
-    Reservation.countDocuments({ ...between(prevMonth, thisMonth), status: { $in: SOLD_STATUSES } }),
+    Reservation.countDocuments({
+      ...between(thisMonth, nextMonth),
+      status: { $in: SOLD_STATUSES },
+    }),
+    Reservation.countDocuments({
+      ...between(prevMonth, thisMonth),
+      status: { $in: SOLD_STATUSES },
+    }),
     revenueBetween(thisMonth, nextMonth),
     revenueBetween(prevMonth, thisMonth),
-    Lead.aggregate<{ _id: string; count: number }>([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
+    Lead.aggregate<{ _id: string; count: number }>([
+      { $group: { _id: "$status", count: { $sum: 1 } } },
+    ]),
     Lead.aggregate<{ _id: string; count: number }>([
       { $group: { _id: "$source", count: { $sum: 1 } } },
       { $sort: { count: -1 } },
     ]),
     Reservation.aggregate<{ _id: string; count: number }>([
       { $match: { createdAt: { $gte: yearAgo }, status: { $in: SOLD_STATUSES } } },
-      { $group: { _id: { $dateToString: { format: "%Y-%m", date: "$createdAt", timezone: TZ } }, count: { $sum: 1 } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m", date: "$createdAt", timezone: TZ } },
+          count: { $sum: 1 },
+        },
+      },
     ]),
     Payment.aggregate<{ _id: string; revenue: number }>([
-      { $match: { status: "approved", approvedAt: { $gte: yearAgo } } },
+      { $match: { status: { $in: ["approved", "refunded"] }, approvedAt: { $gte: yearAgo } } },
       {
         $group: {
           _id: { $dateToString: { format: "%Y-%m", date: "$approvedAt", timezone: TZ } },
@@ -74,7 +140,9 @@ export async function getDashboard() {
     ]),
     Reservation.find()
       .populate("customer", "name")
-      .select("code status categorySlug categoryName pickupAt returnAt pricing.total amountPaid customer createdAt")
+      .select(
+        "code status categorySlug categoryName pickupAt returnAt pricing.total amountPaid customer createdAt",
+      )
       .sort({ createdAt: -1 })
       .limit(5)
       .lean<any[]>(),
@@ -87,9 +155,52 @@ export async function getDashboard() {
       { $match: { isActive: true } },
       { $group: { _id: "$status", count: { $sum: 1 } } },
     ]),
+    Vehicle.find({ isActive: true }).select("_id status").lean<any[]>(),
+    // "En curso hoy": reservas vigentes que tocan lo que queda del día, o autos que siguen afuera.
+    Reservation.distinct("vehicle", {
+      vehicle: { $ne: null },
+      $or: [
+        { ...activeReservationFilter(now), ...overlapFilter(now, todayEnd) },
+        { status: "delivered" },
+      ],
+    }),
+    Reservation.countDocuments({ status: { $in: ["pending_documents", "pending_payment"] } }),
+    Reservation.countDocuments({ status: "confirmed" }),
+    Reservation.countDocuments({ status: "delivered" }),
+    Reservation.find({ status: { $in: ON_ROAD }, pickupAt: { $gte: todayStart, $lt: todayEnd } })
+      .select(todaySelect)
+      .populate("customer", "name phone")
+      .populate("vehicle", "plate brand model")
+      .sort({ pickupAt: 1 })
+      .lean<any[]>(),
+    Reservation.find({ status: { $in: ON_ROAD }, returnAt: { $gte: todayStart, $lt: todayEnd } })
+      .select(todaySelect)
+      .populate("customer", "name phone")
+      .populate("vehicle", "plate brand model")
+      .sort({ returnAt: 1 })
+      .lean<any[]>(),
+    Payment.aggregate<{ _id: string; refunded: number }>([
+      { $match: { status: "refunded", refundedAt: { $gte: yearAgo } } },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m", date: "$refundedAt", timezone: TZ } },
+          refunded: { $sum: "$amount" },
+        },
+      },
+    ]),
   ]);
 
-  const leadsByStatus: Record<string, number> = Object.fromEntries(LEAD_STATUSES.map((s) => [s, 0]));
+  const busy = new Set((busyToday as unknown[]).map(String));
+  const fleetSummary = {
+    available: activeVehicles.filter(
+      (v) => !["maintenance", "blocked"].includes(v.status) && !busy.has(String(v._id)),
+    ).length,
+    total: activeVehicles.length,
+  };
+
+  const leadsByStatus: Record<string, number> = Object.fromEntries(
+    LEAD_STATUSES.map((s) => [s, 0]),
+  );
   for (const r of leadStatusRows) leadsByStatus[r._id] = r.count;
 
   const fleet: Record<string, number> = Object.fromEntries(VEHICLE_STATUSES.map((s) => [s, 0]));
@@ -102,7 +213,9 @@ export async function getDashboard() {
     return {
       month: key,
       count: reservationsByMonthRows.find((r) => r._id === key)?.count ?? 0,
-      revenue: revenueByMonthRows.find((r) => r._id === key)?.revenue ?? 0,
+      revenue:
+        (revenueByMonthRows.find((r) => r._id === key)?.revenue ?? 0) -
+        (revenueByMonthRefunds.find((r) => r._id === key)?.refunded ?? 0),
     };
   });
 
@@ -134,5 +247,18 @@ export async function getDashboard() {
     })),
     latestLeads,
     fleet,
+    fleetSummary,
+    reservationCounts: {
+      pending: pendingCount,
+      confirmed: confirmedCount,
+      inProgress: inProgressCount,
+    },
+    today: {
+      deliveries: deliveriesToday.length,
+      returns: returnsToday.length,
+      deliveriesList: deliveriesToday.map((r) => todayRow(r, "pickup")),
+      returnsList: returnsToday.map((r) => todayRow(r, "return")),
+    },
+    revenueMonth,
   };
 }
