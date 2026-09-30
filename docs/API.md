@@ -283,15 +283,19 @@ Campos nuevos: `fuel` (`gasoline|diesel|hybrid|electric`), `seats`, `mileageKm`,
 ### Licencia de conducir
 - `driver` (en `POST /public/reservations` y `POST /admin/reservations`) agrega `licenseNumber` (4–20 alfanum.), `licenseExpiresAt` (`YYYY-MM-DD`) y `licenseCountry` (ISO-2, opcional; por defecto el país de residencia). Obligatorios en la web.
 - Regla: la licencia debe estar vigente **hasta la fecha de devolución** (`licenseExpiresAt >= fecha de returnAt en Guayaquil`). Si no: 400 `"Tu licencia vence antes de la devolución del vehículo"` con `errorCode: "license_expired"`.
+  El cuerpo de error sigue siendo `{ message }`; cuando el error trae código estable se agrega `errorCode` (`CustomError#withCode`).
+- En la reserva presencial el API valida la licencia solo si llega (el panel la pide siempre); en la web es obligatoria.
 - Se guardan en `Customer`. El detalle admin de reserva y de cliente las muestra; el admin puede corregirlas en `PATCH /admin/customers/:id` `{ name?, email?, phone?, licenseNumber?, licenseExpiresAt?, licenseCountry?, notes? }`.
 
 ### El cliente actualiza sus datos (sin cuenta)
-- `PATCH /public/reservations/:code/contact?t=` `{ email?, phone? }` (E.164). Permitido mientras la reserva no esté `completed`, `cancelled` ni `expired`. Actualiza el `Customer`. → devuelve la reserva pública.
+- `PATCH /public/reservations/:code/contact?t=` `{ email?, phone? }` (E.164). Permitido mientras la reserva no esté `completed`, `cancelled` ni `expired`. Actualiza el `Customer`. → devuelve la reserva pública. 409 si está cerrada.
+- `GET /public/reservations/:code` agrega `driver.phone` para prellenar el formulario.
 - Nombre y documento no se editan (van atados a los documentos verificados): se cambian por el asesor.
 
 ### Fotos sin Cloudinary
 - `POST /admin/uploads` (multipart `file`, imagen jpg/png/webp ≤ 8 MB): si Cloudinary está configurado sube allá; si no, guarda en la colección `Media` y devuelve `{ url: "<API_BASE>/api/public/media/<id>", publicId: "media:<id>" }` (URL absoluta usando `API_PUBLIC_URL` o el host del request). Ya no responde 503.
-- `GET /public/media/:id` → la imagen con su `Content-Type` y `Cache-Control: public, max-age=31536000, immutable`.
+- `GET /public/media/:id` → la imagen con su `Content-Type` y `Cache-Control: public, max-age=31536000, immutable`. 404 `{ message }` si el id no existe o es inválido.
+- Vercel corta cuerpos de más de 4,5 MB: el panel comprime en el navegador (≤1600 px, WebP/JPEG) antes de subir.
 - Unidades: `images` editable desde el panel (subir, ordenar, quitar). `units[].image` en el catálogo público toma la primera.
 
 ### Eliminar personal
