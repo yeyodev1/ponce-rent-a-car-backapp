@@ -16,14 +16,14 @@ import {
 import { Vehicle } from "../models/vehicle.model";
 import {
   activeReservationFilter,
+  assignUnitToReservation,
+  createWithUnit,
   freeVehicles,
-  isVehicleFree,
-  overlapFilter,
   syncVehicleStatus,
 } from "./availability.service";
 import { assertObjectId, paged, pageParams, searchRegex } from "./catalog.service";
 import { sendCapiEvent } from "./metaCapi.service";
-import { computeQuote, parseDateInput, parseQuoteInput } from "./pricing.service";
+import { computeQuote, parseDateInput, parseQuoteInput, QuoteInput } from "./pricing.service";
 import { emitWebhook } from "./webhook.service";
 import { requireE164 } from "../utils/phone";
 
@@ -42,6 +42,31 @@ const ATTRIBUTION_FIELDS = [
 ] as const;
 /** Estados del lead que todavía no reflejan una reserva: se pueden avanzar a "reserved". */
 const LEAD_PRE_RESERVED = ["new", "contacted", "quoted"];
+
+/** Persona del personal que hizo la acción (se guarda tal cual en la reserva o el pago). */
+export interface StaffRef {
+  id: string;
+  name: string;
+  email: string;
+}
+
+/**
+ * Ciclo estricto: sin saltos ni retrocesos. `expired` solo lo pone el sistema.
+ * Pendiente = pending_documents / pending_payment.
+ */
+const TRANSITIONS: Record<string, string[]> = {
+  pending_documents: ["confirmed", "cancelled"],
+  pending_payment: ["confirmed", "cancelled"],
+  confirmed: ["delivered", "cancelled"],
+  delivered: ["completed"],
+  completed: [],
+  cancelled: [],
+  expired: [],
+};
+
+export function allowedTransitions(status: string): string[] {
+  return TRANSITIONS[status] ?? [];
+}
 
 export interface RequestMeta {
   ip?: string;
@@ -65,7 +90,9 @@ function tokensMatch(expected: string, given: string): boolean {
 export async function findByAccess(code: string, token: string) {
   const notFound = new CustomError("Reserva no encontrada", 404);
   if (!code || !token) throw notFound;
-  const reservation = await Reservation.findOne({ code: String(code).toUpperCase() }).select("+accessToken");
+  const reservation = await Reservation.findOne({ code: String(code).toUpperCase() }).select(
+    "+accessToken",
+  );
   if (!reservation || !tokensMatch(reservation.accessToken, String(token))) throw notFound;
   await expireIfStale(reservation);
   return reservation;
@@ -132,7 +159,9 @@ function parseDriver(raw: any) {
   const documentNumber = String(d.documentNumber ?? "")
     .replace(/[\s.-]/g, "")
     .toUpperCase();
-  const email = String(d.email ?? "").trim().toLowerCase();
+  const email = String(d.email ?? "")
+    .trim()
+    .toLowerCase();
 
   if (d.documentType && !["cedula", "passport"].includes(d.documentType)) {
     throw new CustomError("El tipo de documento debe ser cédula o pasaporte", 400);
@@ -153,7 +182,11 @@ function parseDriver(raw: any) {
     documentNumber,
     email,
     phone,
-    country: String(d.country ?? "EC").trim().toUpperCase().slice(0, 2) || "EC",
+    country:
+      String(d.country ?? "EC")
+        .trim()
+        .toUpperCase()
+        .slice(0, 2) || "EC",
     birthDate: String(d.birthDate ?? "").trim(),
   };
 }
@@ -179,7 +212,11 @@ async function upsertCustomer(driver: ReturnType<typeof parseDriver>, language: 
     },
   };
   try {
-    return await Customer.findOneAndUpdate(filter, update, { upsert: true, new: true, runValidators: true });
+    return await Customer.findOneAndUpdate(filter, update, {
+      upsert: true,
+      new: true,
+      runValidators: true,
+    });
   } catch (error: any) {
     // Dos reservas simultáneas del mismo cliente: una gana el insert, la otra actualiza.
     if (error?.code === 11000) return Customer.findOneAndUpdate(filter, update, { new: true });
@@ -240,26 +277,55 @@ function createResponse(reservation: any) {
   };
 }
 
+const NO_UNITS = "Ya no quedan vehículos de esta categoría para esas fechas";
+
 /**
- * ¿Hay otra reserva activa sobre esta unidad y rango creada antes que la mía?
- * Desempata dos solicitudes que leyeron la misma unidad libre al mismo tiempo:
- * gana la más antigua y la otra busca otra unidad.
+ * Cotiza en el servidor con el mismo motor que /public/quote y corta si hay
+ * errores de negocio. `staff` = reserva presencial: sin ventana de días.
  */
-async function losesRace(reservation: any, vehicleId: Types.ObjectId): Promise<boolean> {
-  const rivals = await Reservation.find({
-    ...activeReservationFilter(),
-    ...overlapFilter(reservation.pickupAt, reservation.returnAt),
-    vehicle: vehicleId,
-    _id: { $ne: reservation._id },
-  })
-    .select("_id createdAt")
-    .lean<any[]>();
-  const mine = reservation.createdAt.getTime();
-  return rivals.some(
-    (r) =>
-      r.createdAt.getTime() < mine ||
-      (r.createdAt.getTime() === mine && String(r._id) < String(reservation._id)),
-  );
+async function quoteForBooking(input: QuoteInput, window: "public" | "staff") {
+  const computed = await computeQuote(input, { window });
+  const { quote } = computed;
+  const blocking = quote.errorCodes.filter((c) => c !== "unavailable");
+  if (blocking.length) {
+    const messages = quote.errors.filter((_, i) => quote.errorCodes[i] !== "unavailable");
+    throw new CustomError(messages.join(". "), 400, { errorCodes: blocking });
+  }
+  if (quote.errorCodes.includes("unavailable")) throw new CustomError(NO_UNITS, 409);
+  return computed;
+}
+
+/** Campos comunes de una reserva nueva (web o presencial); la unidad la pone createWithUnit. */
+function baseReservationData(
+  computed: Awaited<ReturnType<typeof computeQuote>>,
+  customer: any,
+  body: any,
+  language: "es" | "en",
+) {
+  const { category, pricing, input } = computed;
+  return {
+    code: "",
+    accessToken: crypto.randomBytes(16).toString("hex"),
+    category: category._id,
+    categorySlug: category.slug,
+    categoryName: category.name,
+    customer: customer._id,
+    pickupAt: input.pickupAt,
+    returnAt: input.returnAt,
+    pickupLocation: input.pickupLocation,
+    returnLocation: input.returnLocation,
+    pickupAddress: String(body?.pickupAddress ?? "")
+      .trim()
+      .slice(0, 300),
+    mileage: input.mileage,
+    coverage: input.coverage,
+    extras: input.extras,
+    pricing,
+    amountPaid: 0,
+    balance: pricing.total,
+    paymentStatus: "pending",
+    language,
+  };
 }
 
 export async function createReservation(
@@ -287,62 +353,26 @@ export async function createReservation(
     if (duplicate) return { created: false, reservation: createResponse(duplicate) };
   }
 
-  const { quote, pricing, category, settings, input: normalized } = await computeQuote(input);
-  const blocking = quote.errorCodes.filter((c) => c !== "unavailable");
-  if (blocking.length) {
-    const messages = quote.errors.filter((_, i) => quote.errorCodes[i] !== "unavailable");
-    throw new CustomError(messages.join(". "), 400, { errorCodes: blocking });
-  }
-  if (quote.errorCodes.includes("unavailable")) {
-    throw new CustomError("Ya no quedan vehículos de esta categoría para esas fechas", 409);
-  }
+  const computed = await quoteForBooking(input, "public");
+  const { category, settings, pricing } = computed;
 
   const customer = await upsertCustomer(driver, language);
   const candidates = await freeVehicles(String(category._id), input.pickupAt, input.returnAt);
-  if (!candidates.length) throw new CustomError("Ya no quedan vehículos de esta categoría para esas fechas", 409);
+  if (!candidates.length) throw new CustomError(NO_UNITS, 409);
 
-  const reservation = await Reservation.create({
-    code: `PON-${await nextSequence("reservation")}`,
-    accessToken: crypto.randomBytes(16).toString("hex"),
-    status: "pending_documents",
-    category: category._id,
-    categorySlug: category.slug,
-    categoryName: category.name,
-    vehicle: candidates[0]._id,
-    customer: customer._id,
-    pickupAt: input.pickupAt,
-    returnAt: input.returnAt,
-    pickupLocation: normalized.pickupLocation,
-    returnLocation: normalized.returnLocation,
-    pickupAddress: String(body?.pickupAddress ?? "").trim().slice(0, 300),
-    mileage: normalized.mileage,
-    coverage: normalized.coverage,
-    extras: normalized.extras,
-    pricing,
-    amountPaid: 0,
-    balance: pricing.total,
-    holdExpiresAt: new Date(Date.now() + settings.booking.holdMinutes * 60 * 1000),
-    language,
-    attribution: parseAttribution(body?.attribution),
-  });
-
-  // Control de carrera: si otra solicitud tomó la misma unidad antes, se prueba la siguiente.
-  let assigned: Types.ObjectId | null = null;
-  for (const candidate of candidates) {
-    if (String(reservation.vehicle) !== String(candidate._id)) {
-      reservation.vehicle = candidate._id;
-      await reservation.save();
-    }
-    if (!(await losesRace(reservation, candidate._id))) {
-      assigned = candidate._id;
-      break;
-    }
-  }
-  if (!assigned) {
-    await Reservation.deleteOne({ _id: reservation._id });
-    throw new CustomError("Ya no quedan vehículos de esta categoría para esas fechas", 409);
-  }
-  await syncVehicleStatus(assigned);
+  const reservation = await createWithUnit(
+    {
+      ...baseReservationData(computed, customer, body, language),
+      code: `PON-${await nextSequence("reservation")}`,
+      status: "pending_documents",
+      channel: "web",
+      holdExpiresAt: new Date(Date.now() + settings.booking.holdMinutes * 60 * 1000),
+      attribution: parseAttribution(body?.attribution),
+    },
+    candidates.map((c) => c._id),
+  );
+  if (!reservation) throw new CustomError(NO_UNITS, 409);
+  await syncVehicleStatus(reservation.vehicle);
 
   const leadRef = await linkLead(body?.leadId, reservation);
   if (leadRef) {
@@ -354,7 +384,10 @@ export async function createReservation(
     emitWebhook("reservation.created", await webhookPayload(reservation)),
     sendCapiEvent({
       event: "InitiateCheckout",
-      eventId: typeof body?.eventId === "string" && body.eventId ? body.eventId : `checkout-${reservation.code}`,
+      eventId:
+        typeof body?.eventId === "string" && body.eventId
+          ? body.eventId
+          : `checkout-${reservation.code}`,
       email: customer.email,
       phone: customer.phone,
       value: pricing.total,
@@ -366,6 +399,66 @@ export async function createReservation(
   ]);
 
   return { created: true, reservation: createResponse(reservation) };
+}
+
+/**
+ * POST /admin/reservations — reserva presencial. Mismo motor de precio y de
+ * asignación que la web, sin ventana de días ni hold: no expira sola.
+ */
+export async function adminCreateReservation(body: any, staff: StaffRef) {
+  const input = parseQuoteInput(body);
+  const driver = parseDriver(body?.driver);
+  const language: "es" | "en" = body?.language === "en" ? "en" : "es";
+  const computed = await quoteForBooking(input, "staff");
+  const { category } = computed;
+
+  let candidateIds: string[];
+  if (body?.vehicleId !== undefined && body.vehicleId !== null && body.vehicleId !== "") {
+    const vehicleId = String(body.vehicleId);
+    if (!isValidObjectId(vehicleId)) throw new CustomError("No se encontró la unidad", 404);
+    const vehicle = await Vehicle.findOne({ _id: vehicleId, isActive: true }).lean<any>();
+    if (!vehicle) throw new CustomError("No se encontró la unidad", 404);
+    if (String(vehicle.category) !== String(category._id)) {
+      throw new CustomError("La unidad elegida no pertenece a esa categoría", 400);
+    }
+    if (["maintenance", "blocked"].includes(vehicle.status)) {
+      throw new CustomError("La unidad está en mantenimiento o bloqueada", 409);
+    }
+    candidateIds = [vehicleId];
+  } else {
+    candidateIds = (await freeVehicles(String(category._id), input.pickupAt, input.returnAt)).map(
+      (v) => String(v._id),
+    );
+    if (!candidateIds.length) throw new CustomError(NO_UNITS, 409);
+  }
+
+  const customer = await upsertCustomer(driver, language);
+  const reservation = await createWithUnit(
+    {
+      ...baseReservationData(computed, customer, body, language),
+      code: `PON-${await nextSequence("reservation")}`,
+      status: "pending_payment",
+      channel: "walk_in",
+      createdBy: staff,
+      holdExpiresAt: null,
+      notes: String(body?.notes ?? "")
+        .trim()
+        .slice(0, 5000),
+    },
+    candidateIds,
+  );
+  if (!reservation) {
+    throw new CustomError(
+      candidateIds.length === 1 && body?.vehicleId
+        ? "La unidad elegida ya está ocupada en esas fechas"
+        : NO_UNITS,
+      409,
+    );
+  }
+  await syncVehicleStatus(reservation.vehicle);
+  await emitWebhook("reservation.created", await webhookPayload(reservation));
+
+  return adminGetReservation(String(reservation._id));
 }
 
 // ---------------------------------------------------------------------------
@@ -386,7 +479,11 @@ export async function expireHolds(): Promise<{ expired: number; codes: string[] 
   // El filtro de estado se repite en el update: si un pago confirmó entre la
   // lectura y la escritura, esa reserva no se expira.
   await Reservation.updateMany(
-    { _id: { $in: stale.map((r) => r._id) }, status: { $in: HOLD_STATUSES }, holdExpiresAt: { $lte: now } },
+    {
+      _id: { $in: stale.map((r) => r._id) },
+      status: { $in: HOLD_STATUSES },
+      holdExpiresAt: { $lte: now },
+    },
     { $set: { status: "expired" } },
   );
   const vehicles = [...new Set(stale.map((r) => String(r.vehicle ?? "")).filter(Boolean))];
@@ -405,7 +502,10 @@ function dateRange(query: any, field: string): Record<string, unknown> {
   const range: Record<string, Date> = {};
   if (from) range.$gte = from;
   // "to" como fecha sola incluye todo ese día.
-  if (to) range.$lte = /^\d{4}-\d{2}-\d{2}$/.test(String(query.to)) ? new Date(to.getTime() + 86_399_999) : to;
+  if (to)
+    range.$lte = /^\d{4}-\d{2}-\d{2}$/.test(String(query.to))
+      ? new Date(to.getTime() + 86_399_999)
+      : to;
   return { [field]: range };
 }
 
@@ -445,7 +545,12 @@ export async function adminListReservations(query: any) {
       .lean(),
     Reservation.countDocuments(filter),
   ]);
-  return paged(items, total, page, limit);
+  return paged(
+    items.map((r: any) => ({ ...r, allowedTransitions: allowedTransitions(r.status) })),
+    total,
+    page,
+    limit,
+  );
 }
 
 export async function adminGetReservation(id: string) {
@@ -459,68 +564,106 @@ export async function adminGetReservation(id: string) {
   if (!reservation) throw new CustomError("No se encontró la reserva", 404);
   const [payments, documents] = await Promise.all([
     Payment.find({ reservation: id }).sort({ createdAt: -1 }).lean(),
-    CustomerDocument.find({ reservation: id }).select("kind contentType size createdAt updatedAt").lean(),
+    CustomerDocument.find({ reservation: id })
+      .select("kind contentType size createdAt updatedAt")
+      .lean(),
   ]);
-  return { ...reservation, payments, documentFiles: documents };
+  return {
+    ...reservation,
+    allowedTransitions: allowedTransitions(reservation.status),
+    payments,
+    documentFiles: documents,
+  };
 }
 
 export async function adminUpdateReservation(id: string, body: any) {
   assertObjectId(id, "la reserva");
   const reservation = await Reservation.findById(id);
   if (!reservation) throw new CustomError("No se encontró la reserva", 404);
+  // Una pendiente con el hold vencido ya no se puede confirmar: su unidad pudo pasar a otra reserva.
+  await expireIfStale(reservation);
+  const previousStatus: string = reservation.status;
   const previousVehicle = reservation.vehicle ? String(reservation.vehicle) : null;
+  const set: Record<string, unknown> = {};
 
+  let status = previousStatus;
   if (body?.status !== undefined) {
-    const status = String(body.status);
-    if (!(RESERVATION_STATUSES as readonly string[]).includes(status)) {
+    const next = String(body.status);
+    if (!(RESERVATION_STATUSES as readonly string[]).includes(next)) {
       throw new CustomError("Estado de reserva inválido", 400);
     }
-    reservation.status = status;
-    // Una reserva confirmada o entregada ya no depende del hold de 20 minutos.
-    if (!HOLD_STATUSES.includes(status)) reservation.holdExpiresAt = null;
+    // Reenviar el mismo estado (formulario completo) no es un salto: se ignora.
+    if (next !== previousStatus) {
+      if (!allowedTransitions(previousStatus).includes(next)) {
+        throw new CustomError(`No se puede pasar de ${previousStatus} a ${next}`, 409);
+      }
+      status = next;
+      set.status = next;
+      // Confirmada, en curso o cerrada ya no depende del hold de 20 minutos.
+      if (!HOLD_STATUSES.includes(next)) set.holdExpiresAt = null;
+    }
   }
 
+  let vehicle = previousVehicle;
   if (body?.vehicleId !== undefined) {
     if (body.vehicleId === null || body.vehicleId === "") {
-      reservation.vehicle = null;
+      vehicle = null;
     } else {
       const vehicleId = String(body.vehicleId);
       if (!isValidObjectId(vehicleId)) throw new CustomError("No se encontró la unidad", 404);
-      const vehicle = await Vehicle.findById(vehicleId).lean<any>();
-      if (!vehicle || !vehicle.isActive) throw new CustomError("No se encontró la unidad", 404);
-      if (["maintenance", "blocked"].includes(vehicle.status)) {
+      const found = await Vehicle.findById(vehicleId).lean<any>();
+      if (!found || !found.isActive) throw new CustomError("No se encontró la unidad", 404);
+      if (["maintenance", "blocked"].includes(found.status)) {
         throw new CustomError("La unidad está en mantenimiento o bloqueada", 409);
       }
-      reservation.vehicle = vehicle._id;
+      vehicle = String(found._id);
     }
   }
-
-  // Si la reserva sigue ocupando calendario, su unidad debe estar libre en el rango.
-  const stillBlocking = (BLOCKING_STATUSES as string[]).includes(reservation.status);
-  if (
-    reservation.vehicle &&
-    stillBlocking &&
-    (body?.vehicleId !== undefined || body?.status !== undefined) &&
-    !(await isVehicleFree(String(reservation.vehicle), reservation.pickupAt, reservation.returnAt, id))
-  ) {
-    throw new CustomError("La unidad ya está ocupada por otra reserva en esas fechas", 409);
+  const vehicleChanged = vehicle !== previousVehicle;
+  if (status === "delivered" && !vehicle) {
+    throw new CustomError("Asigna una unidad antes de marcar la reserva como en curso", 409);
   }
 
   if (body?.verification !== undefined) {
     if (!(VERIFICATION_STATUSES as readonly string[]).includes(String(body.verification))) {
       throw new CustomError("Estado de verificación inválido", 400);
     }
-    reservation.verification = String(body.verification);
-    // La verificación es del conductor, no solo de esta reserva: el cliente que vuelve ya viene verificado.
-    await Customer.updateOne({ _id: reservation.customer }, { $set: { verification: reservation.verification } });
+    set.verification = String(body.verification);
   }
-  if (body?.verificationNote !== undefined) reservation.verificationNote = String(body.verificationNote).slice(0, 2000);
-  if (body?.notes !== undefined) reservation.notes = String(body.notes).slice(0, 5000);
+  if (body?.verificationNote !== undefined)
+    set.verificationNote = String(body.verificationNote).slice(0, 2000);
+  if (body?.notes !== undefined) set.notes = String(body.notes).slice(0, 5000);
 
-  await reservation.save();
+  // Si la reserva sigue ocupando calendario y cambia su unidad o su estado, se
+  // escribe dentro del candado transaccional de la unidad.
+  const stillBlocking = (BLOCKING_STATUSES as string[]).includes(status);
+  if (vehicle && stillBlocking && (vehicleChanged || set.status !== undefined)) {
+    const ok = await assignUnitToReservation(reservation, vehicle, set);
+    if (!ok)
+      throw new CustomError("La unidad ya está ocupada por otra reserva en esas fechas", 409);
+  } else {
+    if (vehicleChanged) set.vehicle = vehicle ? new Types.ObjectId(vehicle) : null;
+    if (Object.keys(set).length)
+      await Reservation.updateOne({ _id: reservation._id }, { $set: set });
+  }
 
-  const touched = new Set([previousVehicle, reservation.vehicle ? String(reservation.vehicle) : null]);
+  if (set.verification !== undefined) {
+    // La verificación es del conductor, no solo de esta reserva: el cliente que vuelve ya viene verificado.
+    await Customer.updateOne(
+      { _id: reservation.customer },
+      { $set: { verification: set.verification } },
+    );
+  }
+
+  const touched = new Set([previousVehicle, vehicle]);
   for (const v of touched) if (v) await syncVehicleStatus(v);
+
+  if (set.status === "confirmed") {
+    // Mismo efecto que una confirmación por Payphone: cuenta como alquiler y avisa al CRM.
+    await Customer.updateOne({ _id: reservation.customer }, { $inc: { totalRentals: 1 } });
+    const fresh = await Reservation.findById(id).lean<any>();
+    await emitWebhook("reservation.confirmed", await webhookPayload(fresh));
+  }
 
   return adminGetReservation(id);
 }
@@ -550,7 +693,9 @@ export async function adminGetCustomer(id: string) {
   if (customer.email) leadOr.push({ email: customer.email });
   const [reservations, leads] = await Promise.all([
     Reservation.find({ customer: id })
-      .select("code status verification categorySlug categoryName pickupAt returnAt pricing.total amountPaid balance createdAt")
+      .select(
+        "code status verification categorySlug categoryName pickupAt returnAt pricing.total amountPaid balance createdAt",
+      )
       .sort({ createdAt: -1 })
       .lean(),
     Lead.find({ $or: leadOr })
@@ -566,12 +711,18 @@ export async function adminListPayments(query: any) {
   const { page, limit, skip } = pageParams(query);
   const filter: Record<string, unknown> = { ...dateRange(query, "createdAt") };
   if (query?.status) filter.status = String(query.status);
+  if (query?.method) filter.method = String(query.method);
   const rx = searchRegex(query?.q);
-  if (rx) filter.$or = [{ reservationCode: rx }, { clientTransactionId: rx }, { transactionId: rx }];
+  if (rx)
+    filter.$or = [{ reservationCode: rx }, { clientTransactionId: rx }, { transactionId: rx }];
   const [items, total] = await Promise.all([
     Payment.find(filter)
       .select("-providerResponse")
-      .populate({ path: "reservation", select: "code customer status", populate: { path: "customer", select: "name email" } })
+      .populate({
+        path: "reservation",
+        select: "code customer status",
+        populate: { path: "customer", select: "name email" },
+      })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
