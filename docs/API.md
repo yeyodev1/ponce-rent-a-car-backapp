@@ -225,3 +225,53 @@ CRUD estándar: `GET /x` (lista), `GET /x/:id`, `POST /x`, `PUT /x/:id`, `DELETE
   `reservation.created`, `reservation.confirmed`, `payment.approved`. Firma HMAC-SHA256 en `X-Ponce-Signature` con `WEBHOOK_SECRET`.
   Pensado para conectar Kommo / HubSpot / Zoho sin cambiar código.
 - Meta Conversions API (`META_PIXEL_ID` + `META_CAPI_TOKEN`): `Lead` al crear lead, `InitiateCheckout` al crear reserva, `Purchase` al confirmar pago.
+
+---
+
+## 6. v1.1 — Especificaciones del sistema (roles, pagos manuales, ciclo estricto)
+
+### Roles del personal
+`accountType`: `employee` | `admin` (los clientes NO tienen cuenta: ven su reserva con el enlace seguro `?t=`).
+- **employee** — todo lo operativo: dashboard, leads, reservas (avanzar estado, crear reserva presencial, registrar pagos), clientes, pagos (consulta), flota (crear/editar categorías y unidades, cambiar estado), disponibilidad, contenido (crear/editar).
+- **admin** — todo lo anterior + **eliminar** (vehículos y cualquier otro DELETE), **gestionar personal**, **tarifas y configuración** (`/admin/settings`, coberturas, extras), **integraciones**, **exportar CSV** y **reembolsos**.
+- `/auth/login` y `/auth/me` devuelven `accountType`. Middlewares: `staffMiddleware` (employee|admin) y `adminMiddleware` (solo admin). Un 403 responde `{ message: "Solo un administrador puede hacer esto" }`.
+
+### Personal (solo admin)
+- `GET /admin/staff` → `{ items: [{ id, name, email, phone, accountType, isActive, lastLoginAt, createdAt }], total, page, pages }`
+- `POST /admin/staff` `{ name, email, phone, accountType: "employee"|"admin", password }` (mín. 8) → 201
+- `PUT /admin/staff/:id` `{ name?, email?, phone?, accountType?, password? }`
+- `PATCH /admin/staff/:id/active` `{ isActive: boolean }` — no se eliminan cuentas. Un admin no puede desactivarse ni quitarse el rol a sí mismo, ni dejar el sistema sin ningún admin activo.
+- Una cuenta desactivada no puede iniciar sesión y su token deja de servir.
+
+### Ciclo de vida de la reserva (estricto, sin saltos ni retrocesos)
+Estado visible → estado interno: **Pendiente** = `pending_documents`/`pending_payment`, **Confirmada** = `confirmed`, **En curso** = `delivered`, **Completada** = `completed`, **Cancelada** = `cancelled` (final), `expired` (final, solo lo pone el sistema).
+Transiciones permitidas en `PATCH /admin/reservations/:id { status }`:
+`pending_* → confirmed | cancelled`, `confirmed → delivered | cancelled`, `delivered → completed`. Cualquier otra → 409 `"No se puede pasar de X a Y"`.
+Para pasar a `delivered` la reserva debe tener unidad asignada. Cada respuesta de reserva admin incluye `allowedTransitions: string[]`.
+
+### Pagos manuales y estado de pago
+- `POST /admin/reservations/:id/payments` `{ amount (centavos > 0), method: "cash"|"transfer"|"card", note? }` → 201 Payment (`provider: "manual"`, `mode: "manual"`, `status: "approved"`, `registeredBy` = usuario de la sesión). No se permite en reservas `cancelled`/`expired`.
+- `POST /admin/payments/:id/refund` (solo admin) → status `refunded`, `refundedAt`.
+- `reservation.paymentStatus` lo calcula el sistema tras cada pago/reembolso: `pending` (0 aprobado), `partial` (0 < pagado < total), `paid` (pagado ≥ total), `refunded` (había pagos y todos quedaron reembolsados). `amountPaid` = suma de aprobados; `balance` = max(total − amountPaid, 0).
+- `GET /admin/payments` incluye `method`, `status`, `registeredBy`, `reservationCode`, `createdAt`/`approvedAt`, filtros `status`, `method`, `from`, `to`.
+
+### Reserva presencial (walk-in)
+`POST /admin/reservations` `{ categorySlug, vehicleId?, pickupAt, returnAt, pickupLocation, returnLocation, mileage, coverage, extras, driver: {...}, notes?, language? }`
+- Precio calculado en el servidor (mismo motor que `/public/quote`), congelado.
+- Sin ventana de 5 días (el personal puede reservar más adelante); el retiro no puede ser en el pasado (tolerancia 15 min).
+- `channel: "walk_in"`, `createdBy` = usuario de la sesión, sin hold (no expira), status `pending_payment`.
+- Devuelve la reserva + `accessToken` (para enviarle el enlace al cliente).
+
+### Doble reserva bloqueada también en base de datos
+La asignación de unidad corre en una **transacción de MongoDB**: dentro de la transacción se revisa el solape y se incrementa `vehicle.lockVersion`; dos asignaciones simultáneas de la misma unidad chocan (WriteConflict) y la segunda reintenta viendo a la primera. Aplica a reservas web, presenciales y a reasignaciones del admin.
+
+### Dashboard (se agregan)
+`fleetSummary: { available, total }` (available = unidades activas sin mantenimiento/bloqueo y sin reserva en curso hoy), `reservationCounts: { pending, confirmed, inProgress }`, `today: { deliveries, returns, deliveriesList: [...], returnsList: [...] }` (retiros/devoluciones con fecha de hoy en Guayaquil, estados confirmed/delivered), `revenueMonth` = pagos aprobados del mes (en línea + manuales) menos reembolsados.
+
+### Vehículos
+Campos nuevos: `fuel` (`gasoline|diesel|hybrid|electric`), `seats`, `mileageKm`, `description`. Estados visibles: disponible = `available`, en mantenimiento = `maintenance`, inactivo = `blocked` o `isActive: false`.
+
+### Catálogo público
+- Nueva categoría **lujo** (Lujo / Luxury).
+- `GET /public/categories?from=&to=` (ISO) → `availableUnits` calculado para ese rango.
+- `GET /public/categories/:slug` agrega `units: [{ brand, model, year, transmission, fuel, seats, color, image }]` de unidades activas (sin placa ni datos internos) — dato secundario, la venta sigue siendo por categoría.
