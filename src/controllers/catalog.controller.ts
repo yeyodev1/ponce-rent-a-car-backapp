@@ -10,10 +10,10 @@ export async function config(_req: Request, res: Response, next: NextFunction) {
   }
 }
 
-/** GET /api/public/categories */
-export async function listCategories(_req: Request, res: Response, next: NextFunction) {
+/** GET /api/public/categories?from=&to= */
+export async function listCategories(req: Request, res: Response, next: NextFunction) {
   try {
-    res.status(200).json(await catalogService.listPublicCategories());
+    res.status(200).json(await catalogService.listPublicCategories(req.query));
   } catch (error) {
     next(error);
   }
@@ -22,7 +22,9 @@ export async function listCategories(_req: Request, res: Response, next: NextFun
 /** GET /api/public/categories/:slug */
 export async function getCategory(req: Request, res: Response, next: NextFunction) {
   try {
-    res.status(200).json(await catalogService.getPublicCategory(String(req.params.slug)));
+    res
+      .status(200)
+      .json(await catalogService.getPublicCategory(String(req.params.slug), req.query));
   } catch (error) {
     next(error);
   }
