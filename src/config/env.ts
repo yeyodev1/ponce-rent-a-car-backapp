@@ -32,6 +32,8 @@ export const env = {
   JWT_SECRET: required("JWT_SECRET"),
   CORS_ORIGINS: list("CORS_ORIGINS"),
   FRONTEND_URL: optional("FRONTEND_URL", "http://localhost:5173"),
+  // Base absoluta del API para las URLs de /public/media. Vacía = se toma del host del request.
+  API_PUBLIC_URL: optional("API_PUBLIC_URL", "").replace(/\/+$/, ""),
   SLACK_ERROR_WEBHOOK: optional("SLACK_ERROR_WEBHOOK", ""),
   ADMIN_EMAIL: optional("ADMIN_EMAIL", "admin@cliente.com").toLowerCase(),
   ADMIN_PASSWORD: optional("ADMIN_PASSWORD", ""),
