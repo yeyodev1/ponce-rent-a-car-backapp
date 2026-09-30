@@ -1,4 +1,5 @@
-import { Router } from "express";
+import { Router, Request, Response, NextFunction } from "express";
+import { CustomError } from "../errors/customError.error";
 import * as adminFleetController from "../controllers/adminFleet.controller";
 import { adminMiddleware } from "../middlewares/admin.middleware";
 import { uploadMiddleware } from "../middlewares/upload.middleware";
@@ -37,6 +38,18 @@ router.delete("/extras/:id", adminMiddleware, adminFleetController.deleteExtra);
 router.get("/settings", adminFleetController.getSettings);
 router.put("/settings", adminMiddleware, adminFleetController.updateSettings);
 
-router.post("/uploads", uploadMiddleware.single("file"), adminFleetController.upload);
+/** Traduce los errores de multer (archivo enorme, campo equivocado) a un 400 legible. */
+const singleFile = uploadMiddleware.single("file");
+function uploadImage(req: Request, res: Response, next: NextFunction) {
+  singleFile(req, res, (error: unknown) => {
+    if (!error) return next();
+    const code = (error as { code?: string }).code;
+    if (code === "LIMIT_FILE_SIZE")
+      return next(new CustomError("La imagen supera el máximo de 8 MB", 400));
+    return next(new CustomError('Adjunta la imagen en el campo "file"', 400));
+  });
+}
+
+router.post("/uploads", uploadImage, adminFleetController.upload);
 
 export default router;
