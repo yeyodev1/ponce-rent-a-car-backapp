@@ -38,7 +38,15 @@ export function localParts(date: Date): { year: number; month: number; day: numb
 }
 
 /** Instante UTC que corresponde a una fecha/hora local de Guayaquil. */
-export function fromLocal(year: number, month: number, day: number, h = 0, m = 0, s = 0, ms = 0): Date {
+export function fromLocal(
+  year: number,
+  month: number,
+  day: number,
+  h = 0,
+  m = 0,
+  s = 0,
+  ms = 0,
+): Date {
   return new Date(Date.UTC(year, month, day, h, m, s, ms) + GYE_OFFSET_MS);
 }
 
@@ -55,7 +63,11 @@ export function rentalDays(pickupAt: Date, returnAt: Date): number {
   return Math.max(1, Math.ceil(hours / 24));
 }
 
-export type QuoteErrorCode = "too_far" | "too_soon" | "return_before_pickup" | "unavailable";
+export type QuoteErrorCode =
+  "too_far" | "too_soon" | "return_before_pickup" | "unavailable" | "in_past";
+
+/** Margen para que el personal registre una reserva "para ahora" mientras llena el formulario. */
+const STAFF_PAST_TOLERANCE_MS = 15 * 60 * 1000;
 
 export interface QuoteExtraInput {
   code: string;
@@ -90,7 +102,9 @@ export interface QuoteResult {
 /** Normaliza y valida la forma del body. Errores de forma → 400; reglas de negocio → `errors`. */
 export function parseQuoteInput(body: any): QuoteInput {
   const b = body ?? {};
-  const categorySlug = String(b.categorySlug ?? "").trim().toLowerCase();
+  const categorySlug = String(b.categorySlug ?? "")
+    .trim()
+    .toLowerCase();
   if (!categorySlug) throw new CustomError("Elige una categoría de vehículo", 400);
 
   const pickupAt = parseDateInput(b.pickupAt);
@@ -113,7 +127,9 @@ export function parseQuoteInput(body: any): QuoteInput {
     throw new CustomError("Los extras deben ser una lista", 400);
   }
   for (const item of (b.extras ?? []) as any[]) {
-    const code = String(item?.code ?? "").trim().toLowerCase();
+    const code = String(item?.code ?? "")
+      .trim()
+      .toLowerCase();
     const quantity = item?.quantity === undefined ? 1 : Number(item.quantity);
     if (!code) continue;
     if (!Number.isInteger(quantity) || quantity < 0) {
@@ -130,7 +146,9 @@ export function parseQuoteInput(body: any): QuoteInput {
     pickupLocation,
     returnLocation,
     mileage,
-    coverage: String(b.coverage ?? "").trim().toLowerCase(),
+    coverage: String(b.coverage ?? "")
+      .trim()
+      .toLowerCase(),
     extras: [...extrasMap].map(([code, quantity]) => ({ code, quantity })),
     promoCode: String(b.promoCode ?? "").trim(),
   };
@@ -158,7 +176,15 @@ export function validateWindow(
   }
 
   const today = localParts(now);
-  const lastMoment = fromLocal(today.year, today.month, today.day + booking.maxDaysAhead, 23, 59, 59, 999);
+  const lastMoment = fromLocal(
+    today.year,
+    today.month,
+    today.day + booking.maxDaysAhead,
+    23,
+    59,
+    59,
+    999,
+  );
   if (pickupAt.getTime() > lastMoment.getTime()) {
     errors.push(
       `La fecha de retiro supera el máximo de ${booking.maxDaysAhead} días. Para fechas más lejanas escríbenos por WhatsApp`,
@@ -166,6 +192,28 @@ export function validateWindow(
     errorCodes.push("too_far");
   }
 
+  return { errors, errorCodes };
+}
+
+/**
+ * Ventana del personal (reserva presencial): sin tope de días ni aviso mínimo,
+ * solo que el retiro no quede en el pasado.
+ */
+export function validateStaffWindow(
+  pickupAt: Date,
+  returnAt: Date,
+  now = new Date(),
+): { errors: string[]; errorCodes: QuoteErrorCode[] } {
+  const errors: string[] = [];
+  const errorCodes: QuoteErrorCode[] = [];
+  if (returnAt.getTime() <= pickupAt.getTime()) {
+    errors.push("La devolución debe ser posterior al retiro");
+    errorCodes.push("return_before_pickup");
+  }
+  if (pickupAt.getTime() < now.getTime() - STAFF_PAST_TOLERANCE_MS) {
+    errors.push("La fecha de retiro ya pasó");
+    errorCodes.push("in_past");
+  }
   return { errors, errorCodes };
 }
 
@@ -195,7 +243,11 @@ export interface ComputedQuote {
  */
 export async function computeQuote(
   input: QuoteInput,
-  options: { excludeReservationId?: string; skipAvailability?: boolean } = {},
+  options: {
+    excludeReservationId?: string;
+    skipAvailability?: boolean;
+    window?: "public" | "staff";
+  } = {},
 ): Promise<ComputedQuote> {
   const settings = await getSettings();
   const booking = settings.booking;
@@ -210,7 +262,9 @@ export async function computeQuote(
   if (input.coverage && !coverage) throw new CustomError("La cobertura elegida no existe", 400);
 
   const extraDocs = input.extras.length
-    ? await Extra.find({ code: { $in: input.extras.map((e) => e.code) }, isActive: true }).lean<any[]>()
+    ? await Extra.find({ code: { $in: input.extras.map((e) => e.code) }, isActive: true }).lean<
+        any[]
+      >()
     : [];
 
   const locationOf = (code: string) => booking.locations.find((l) => l.code === code);
@@ -268,7 +322,8 @@ export async function computeQuote(
 
   for (const item of input.extras) {
     const extra = extraDocs.find((e) => e.code === item.code);
-    if (!extra) throw new CustomError(`El extra "${item.code}" no existe o no está disponible`, 400);
+    if (!extra)
+      throw new CustomError(`El extra "${item.code}" no existe o no está disponible`, 400);
     if (item.quantity > extra.maxQuantity) {
       throw new CustomError(
         `Puedes agregar como máximo ${extra.maxQuantity} de "${extra.name?.es || extra.code}"`,
@@ -299,20 +354,35 @@ export async function computeQuote(
             es: `Entrega: ${pickupLoc.label.es} · Devolución: ${returnLoc.label.es}`,
             en: `Pick-up: ${pickupLoc.label.en} · Return: ${returnLoc.label.en}`,
           }
-        : { es: `Entrega y devolución: ${pickupLoc.label.es}`, en: `Pick-up and return: ${pickupLoc.label.en}` },
+        : {
+            es: `Entrega y devolución: ${pickupLoc.label.es}`,
+            en: `Pick-up and return: ${pickupLoc.label.en}`,
+          },
     amount: locationFee,
   });
 
   const total = lines.reduce((sum, l) => sum + Math.round(l.amount), 0);
   const deposit = computeDeposit(booking, total);
 
-  const { errors, errorCodes } = validateWindow(booking, input.pickupAt, input.returnAt);
+  const { errors, errorCodes } =
+    options.window === "staff"
+      ? validateStaffWindow(input.pickupAt, input.returnAt)
+      : validateWindow(booking, input.pickupAt, input.returnAt);
 
   const availableUnits =
     options.skipAvailability || errorCodes.includes("return_before_pickup")
       ? 0
-      : await countAvailableUnits(String(category._id), input.pickupAt, input.returnAt, options.excludeReservationId);
-  if (!options.skipAvailability && !errorCodes.includes("return_before_pickup") && availableUnits === 0) {
+      : await countAvailableUnits(
+          String(category._id),
+          input.pickupAt,
+          input.returnAt,
+          options.excludeReservationId,
+        );
+  if (
+    !options.skipAvailability &&
+    !errorCodes.includes("return_before_pickup") &&
+    availableUnits === 0
+  ) {
     errors.push("No hay vehículos disponibles de esta categoría para esas fechas");
     errorCodes.push("unavailable");
   }
@@ -342,7 +412,13 @@ export async function computeQuote(
     extraKmPrice,
   };
 
-  return { input: { ...input, coverage: coverage?.code ?? input.coverage }, category, settings, quote, pricing };
+  return {
+    input: { ...input, coverage: coverage?.code ?? input.coverage },
+    category,
+    settings,
+    quote,
+    pricing,
+  };
 }
 
 /** POST /public/quote: no guarda nada. */
