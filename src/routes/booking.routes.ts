@@ -18,7 +18,8 @@ function uploadDocuments(req: Request, res: Response, next: NextFunction) {
   documentFiles(req, res, (error: unknown) => {
     if (!error) return next();
     const code = (error as { code?: string }).code;
-    if (code === "LIMIT_FILE_SIZE") return next(new CustomError("El archivo supera el máximo de 8 MB", 400));
+    if (code === "LIMIT_FILE_SIZE")
+      return next(new CustomError("El archivo supera el máximo de 8 MB", 400));
     return next(new CustomError("Solo se aceptan los campos license e identity", 400));
   });
 }
@@ -26,6 +27,7 @@ function uploadDocuments(req: Request, res: Response, next: NextFunction) {
 router.post("/quote", bookingController.quote);
 router.post("/reservations", bookingController.createReservation);
 router.get("/reservations/:code", bookingController.getReservation);
+router.patch("/reservations/:code/contact", bookingController.updateContact);
 router.post("/reservations/:code/documents", uploadDocuments, bookingController.uploadDocuments);
 router.post("/reservations/:code/checkout", paymentController.checkout);
 router.post("/payments/confirm", paymentController.confirm);
