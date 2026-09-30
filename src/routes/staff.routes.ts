@@ -9,5 +9,6 @@ router.get("/staff", adminMiddleware, staffController.list);
 router.post("/staff", adminMiddleware, staffController.create);
 router.put("/staff/:id", adminMiddleware, staffController.update);
 router.patch("/staff/:id/active", adminMiddleware, staffController.setActive);
+router.delete("/staff/:id", adminMiddleware, staffController.remove);
 
 export default router;
