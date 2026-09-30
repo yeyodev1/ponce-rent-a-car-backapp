@@ -19,6 +19,7 @@ router.get("/reservations/:id/documents/:kind", adminBookingController.getDocume
 
 router.get("/customers", adminBookingController.listCustomers);
 router.get("/customers/:id", adminBookingController.getCustomer);
+router.patch("/customers/:id", adminBookingController.updateCustomer);
 
 router.get("/payments", adminBookingController.listPayments);
 router.post("/payments/:id/refund", adminMiddleware, adminBookingController.refundPayment);
