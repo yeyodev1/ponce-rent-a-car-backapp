@@ -14,7 +14,6 @@ import {
   countReservableByCategory,
   overlapFilter,
 } from "./availability.service";
-import { uploadBuffer } from "./cloudinary.service";
 import { parseDateInput } from "./pricing.service";
 import { getSettings, updateSettings } from "./settings.service";
 
@@ -45,9 +44,9 @@ export function paged<T>(items: T[], total: number, page: number, limit: number)
   return { items, total, page, pages: Math.max(1, Math.ceil(total / limit)) };
 }
 
-export function assertObjectId(id: unknown, what = "registro"): string {
+export function assertObjectId(id: unknown, what = "el registro"): string {
   if (typeof id !== "string" || !isValidObjectId(id))
-    throw new CustomError(`No se encontró el ${what}`, 404);
+    throw new CustomError(`No se encontró ${what}`, 404);
   return id;
 }
 
@@ -643,10 +642,4 @@ export async function adminUpdateSettings(body: any) {
   }
 
   return updateSettings(patch);
-}
-
-export async function adminUpload(file: Express.Multer.File | undefined) {
-  if (!file) throw new CustomError('Adjunta un archivo en el campo "file"', 400);
-  if (!/^image\//.test(file.mimetype)) throw new CustomError("Solo se aceptan imágenes", 400);
-  return uploadBuffer(file.buffer, "ponce-rent-a-car");
 }
