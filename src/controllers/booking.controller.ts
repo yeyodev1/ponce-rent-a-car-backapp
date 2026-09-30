@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import * as customerService from "../services/customer.service";
 import * as documentService from "../services/document.service";
 import * as pricingService from "../services/pricing.service";
 import * as reservationService from "../services/reservation.service";
@@ -10,7 +11,9 @@ export function accessToken(req: Request): string {
 }
 
 export function requestMeta(req: Request): reservationService.RequestMeta {
-  const forwarded = String(req.get("x-forwarded-for") ?? "").split(",")[0].trim();
+  const forwarded = String(req.get("x-forwarded-for") ?? "")
+    .split(",")[0]
+    .trim();
   return { ip: forwarded || req.ip, userAgent: req.get("user-agent") ?? undefined };
 }
 
@@ -26,7 +29,10 @@ export async function quote(req: Request, res: Response, next: NextFunction) {
 /** POST /api/public/reservations — 201 si es nueva, 200 si era un duplicado. */
 export async function createReservation(req: Request, res: Response, next: NextFunction) {
   try {
-    const { created, reservation } = await reservationService.createReservation(req.body, requestMeta(req));
+    const { created, reservation } = await reservationService.createReservation(
+      req.body,
+      requestMeta(req),
+    );
     res.status(created ? 201 : 200).json(reservation);
   } catch (error) {
     next(error);
@@ -36,7 +42,28 @@ export async function createReservation(req: Request, res: Response, next: NextF
 /** GET /api/public/reservations/:code?t= */
 export async function getReservation(req: Request, res: Response, next: NextFunction) {
   try {
-    res.status(200).json(await reservationService.getPublicReservation(String(req.params.code), accessToken(req)));
+    res
+      .status(200)
+      .json(
+        await reservationService.getPublicReservation(String(req.params.code), accessToken(req)),
+      );
+  } catch (error) {
+    next(error);
+  }
+}
+
+/** PATCH /api/public/reservations/:code/contact?t= — { email?, phone? } */
+export async function updateContact(req: Request, res: Response, next: NextFunction) {
+  try {
+    res
+      .status(200)
+      .json(
+        await customerService.updatePublicContact(
+          String(req.params.code),
+          accessToken(req),
+          req.body,
+        ),
+      );
   } catch (error) {
     next(error);
   }
@@ -54,7 +81,11 @@ export async function uploadDocuments(req: Request, res: Response, next: NextFun
     if (!incoming.length && req.body?.dataUrl) {
       incoming.push(documentService.fromDataUrl(req.body.kind, req.body.dataUrl));
     }
-    const result = await documentService.uploadDocuments(String(req.params.code), accessToken(req), incoming);
+    const result = await documentService.uploadDocuments(
+      String(req.params.code),
+      accessToken(req),
+      incoming,
+    );
     res.status(200).json(result);
   } catch (error) {
     next(error);
