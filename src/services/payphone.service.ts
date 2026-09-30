@@ -6,9 +6,10 @@ import { Customer } from "../models/customer.model";
 import { Lead } from "../models/lead.model";
 import { Payment } from "../models/payment.model";
 import { Reservation } from "../models/reservation.model";
-import { freeVehicles, isVehicleFree, syncVehicleStatus } from "./availability.service";
+import { assignUnitToReservation, freeVehicles, syncVehicleStatus } from "./availability.service";
 import { sendReservationConfirmed } from "./bookingEmail.service";
 import { sendCapiEvent } from "./metaCapi.service";
+import { recalculatePayments } from "./payment.service";
 import { findByAccess, webhookPayload } from "./reservation.service";
 import { emitWebhook } from "./webhook.service";
 
@@ -33,7 +34,10 @@ function toInternationalPhone(raw: string, country: string): string {
 
 /** Único por intento y ≤ 50 caracteres (límite de Payphone). */
 function newClientTransactionId(code: string): string {
-  const base = code.replace(/[^A-Z0-9]/gi, "").toUpperCase().slice(0, 20);
+  const base = code
+    .replace(/[^A-Z0-9]/gi, "")
+    .toUpperCase()
+    .slice(0, 20);
   return `${base}-${Date.now().toString(36)}${crypto.randomBytes(4).toString("hex")}`.slice(0, 50);
 }
 
@@ -50,7 +54,11 @@ export async function createCheckout(code: string, token: string, modeRaw: unkno
       throw new CustomError("Esta reserva no admite depósito: elige pagar el total", 400);
     }
     amount = mode === "deposit" ? reservation.pricing.deposit : reservation.pricing.total;
-  } else if (reservation.status === "confirmed" && reservation.balance > 0 && requested === "full") {
+  } else if (
+    reservation.status === "confirmed" &&
+    reservation.balance > 0 &&
+    requested === "full"
+  ) {
     mode = "balance";
     amount = reservation.balance;
   } else if (reservation.status === "pending_documents") {
@@ -73,6 +81,7 @@ export async function createCheckout(code: string, token: string, modeRaw: unkno
     reservationCode: reservation.code,
     provider: "payphone",
     mode,
+    method: "card",
     amount,
     currency: "USD",
     clientTransactionId,
@@ -112,20 +121,41 @@ async function accessTokenOf(reservationId: unknown): Promise<string> {
 /**
  * Si el hold venció mientras el cliente pagaba, la unidad pudo pasar a otra
  * reserva. El pago ya entró, así que la reserva se confirma igual: se busca
- * otra unidad libre o queda sin asignar para que el admin la resuelva.
+ * otra unidad libre (con el mismo candado transaccional que una reserva nueva)
+ * o queda sin asignar para que el personal la resuelva.
  */
 async function ensureVehicle(reservation: any): Promise<void> {
   const id = String(reservation._id);
-  if (reservation.vehicle && (await isVehicleFree(String(reservation.vehicle), reservation.pickupAt, reservation.returnAt, id))) {
-    return;
+  const previous = reservation.vehicle ? String(reservation.vehicle) : null;
+  const free = await freeVehicles(
+    String(reservation.category),
+    reservation.pickupAt,
+    reservation.returnAt,
+    id,
+  );
+  // Primero su propia unidad; si ya la tomó otra reserva, cualquier libre de la categoría.
+  const candidates = [
+    ...(previous ? [previous] : []),
+    ...free.map((v) => String(v._id)).filter((v) => v !== previous),
+  ];
+  let assigned: string | null = null;
+  for (const candidate of candidates) {
+    // El estado viaja dentro de la transacción: así la reserva ya ocupa la unidad al soltar el candado.
+    if (
+      await assignUnitToReservation(reservation, candidate, {
+        status: "confirmed",
+        holdExpiresAt: null,
+      })
+    ) {
+      assigned = candidate;
+      break;
+    }
   }
-  const previous = reservation.vehicle;
-  const free = await freeVehicles(String(reservation.category), reservation.pickupAt, reservation.returnAt, id);
-  reservation.vehicle = free[0]?._id ?? null;
-  if (!reservation.vehicle) {
+  reservation.vehicle = assigned;
+  if (!assigned) {
     reservation.notes = `${reservation.notes ? `${reservation.notes}\n` : ""}[${new Date().toISOString()}] Pago aprobado sin unidad libre: asignar una manualmente.`;
   }
-  if (previous) await syncVehicleStatus(previous);
+  if (previous && previous !== assigned) await syncVehicleStatus(previous);
 }
 
 export async function confirmPayment(body: any, meta: { ip?: string; userAgent?: string }) {
@@ -165,22 +195,37 @@ export async function confirmPayment(body: any, meta: { ip?: string; userAgent?:
     if (providerData) {
       // Error funcional de Payphone ({ message, errorCode }): se guarda para soporte y el pago
       // queda pendiente por si el cliente reintenta con la misma transacción.
-      await Payment.updateOne({ _id: payment._id, status: "pending" }, { $set: { providerResponse: providerData } });
+      await Payment.updateOne(
+        { _id: payment._id, status: "pending" },
+        { $set: { providerResponse: providerData } },
+      );
       return done("error", providerData.message || "Payphone no pudo confirmar el pago");
     }
-    throw new CustomError("No se pudo contactar a Payphone. Intenta de nuevo en unos segundos", 502);
+    throw new CustomError(
+      "No se pudo contactar a Payphone. Intenta de nuevo en unos segundos",
+      502,
+    );
   }
 
   const statusCode = Number(data?.statusCode);
   if (statusCode === 2) {
     await Payment.updateOne(
       { _id: payment._id, status: "pending" },
-      { $set: { status: "canceled", providerResponse: data, transactionId: String(data?.transactionId ?? id) } },
+      {
+        $set: {
+          status: "canceled",
+          providerResponse: data,
+          transactionId: String(data?.transactionId ?? id),
+        },
+      },
     );
     return done("canceled", "El pago fue cancelado");
   }
   if (statusCode !== 3) {
-    await Payment.updateOne({ _id: payment._id, status: "pending" }, { $set: { providerResponse: data } });
+    await Payment.updateOne(
+      { _id: payment._id, status: "pending" },
+      { $set: { providerResponse: data } },
+    );
     return done("error", data?.message || "El pago no fue aprobado");
   }
 
@@ -189,7 +234,9 @@ export async function confirmPayment(body: any, meta: { ip?: string; userAgent?:
       { _id: payment._id, status: "pending" },
       { $set: { status: "error", providerResponse: data } },
     );
-    console.error(`[payphone] monto distinto en ${clientTransactionId}: esperado ${payment.amount}, recibido ${data.amount}`);
+    console.error(
+      `[payphone] monto distinto en ${clientTransactionId}: esperado ${payment.amount}, recibido ${data.amount}`,
+    );
     return done("error", "El monto cobrado no coincide con la reserva. Contáctanos para revisarlo");
   }
 
@@ -199,6 +246,7 @@ export async function confirmPayment(body: any, meta: { ip?: string; userAgent?:
     {
       $set: {
         status: "approved",
+        method: "card",
         approvedAt: new Date(),
         transactionId: String(data.transactionId ?? id),
         providerResponse: data,
@@ -208,15 +256,15 @@ export async function confirmPayment(body: any, meta: { ip?: string; userAgent?:
   );
   if (!claimed) return done("approved", "Pago aprobado");
 
+  // Se recalcula antes de cargar la reserva: el save de abajo no debe pisar los totales.
+  await recalculatePayments(payment.reservation);
   const reservation = await Reservation.findById(payment.reservation).select("+accessToken");
   if (!reservation) throw new CustomError("No se encontró la reserva del pago", 404);
 
   const firstConfirmation = !["confirmed", "delivered", "completed"].includes(reservation.status);
-  reservation.amountPaid = (reservation.amountPaid || 0) + claimed.amount;
-  reservation.balance = Math.max(0, reservation.pricing.total - reservation.amountPaid);
-  reservation.paymentMode = reservation.balance === 0 ? "full" : "deposit";
   if (firstConfirmation) {
-    if (reservation.status === "expired" || reservation.status === "cancelled") await ensureVehicle(reservation);
+    if (reservation.status === "expired" || reservation.status === "cancelled")
+      await ensureVehicle(reservation);
     reservation.status = "confirmed";
     reservation.holdExpiresAt = null;
   }
@@ -224,7 +272,11 @@ export async function confirmPayment(body: any, meta: { ip?: string; userAgent?:
   await syncVehicleStatus(reservation.vehicle);
 
   const customer = firstConfirmation
-    ? await Customer.findByIdAndUpdate(reservation.customer, { $inc: { totalRentals: 1 } }, { new: true }).lean<any>()
+    ? await Customer.findByIdAndUpdate(
+        reservation.customer,
+        { $inc: { totalRentals: 1 } },
+        { new: true },
+      ).lean<any>()
     : await Customer.findById(reservation.customer).lean<any>();
 
   if (reservation.lead) {
@@ -237,13 +289,19 @@ export async function confirmPayment(body: any, meta: { ip?: string; userAgent?:
   const payload = await webhookPayload(reservation);
   await Promise.all([
     firstConfirmation
-      ? sendReservationConfirmed({ reservation, customer, accessToken: reservation.accessToken, paidNow: claimed.amount })
+      ? sendReservationConfirmed({
+          reservation,
+          customer,
+          accessToken: reservation.accessToken,
+          paidNow: claimed.amount,
+        })
       : Promise.resolve(),
     emitWebhook("payment.approved", {
       reservationCode,
       clientTransactionId,
       transactionId: claimed.transactionId,
       mode: claimed.mode,
+      method: "card",
       amount: claimed.amount,
       currency: "USD",
     }),
