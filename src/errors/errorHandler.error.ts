@@ -15,7 +15,10 @@ export class ErrorHandler {
       this.notifySlack(message, status, error).catch(() => {});
     }
 
-    res.status(status).json({ message });
+    // El formato sigue siendo { message }; errorCode solo aparece cuando el error lo trae.
+    res
+      .status(status)
+      .json(error?.errorCode ? { message, errorCode: error.errorCode } : { message });
   }
 
   private async notifySlack(message: string, status: number, error: any) {
