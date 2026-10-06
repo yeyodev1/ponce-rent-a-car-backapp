@@ -334,6 +334,8 @@ function baseReservationData(
     amountPaid: 0,
     balance: pricing.total,
     paymentStatus: "pending",
+    // La garantía física arranca pendiente con el monto de la tarifa congelada.
+    guarantee: { status: "pending", amount: pricing.guaranteeAmount ?? 0 },
     language,
   };
 }
