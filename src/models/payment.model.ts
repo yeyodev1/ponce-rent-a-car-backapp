@@ -16,7 +16,11 @@ export interface IPayment {
   currency: "USD";
   clientTransactionId: string;
   transactionId: string;
-  status: "pending" | "approved" | "canceled" | "error" | "refunded";
+  /** voided = anulado por error de registro (no hubo dinero); refunded = se devolvió dinero. */
+  status: "pending" | "approved" | "canceled" | "error" | "refunded" | "voided";
+  voidedAt: Date | null;
+  voidReason: string;
+  voidedBy: { id: string; name: string; email: string } | null;
   providerResponse: unknown;
   approvedAt: Date | null;
 }
@@ -34,13 +38,19 @@ const paymentSchema = new Schema<IPayment>(
     },
     note: { type: String, default: "" },
     refundedAt: { type: Date, default: null },
+    voidedAt: { type: Date, default: null },
+    voidReason: { type: String, default: "" },
+    voidedBy: {
+      type: new Schema({ id: String, name: String, email: String }, { _id: false }),
+      default: null,
+    },
     amount: { type: Number, required: true, min: 1 },
     currency: { type: String, default: "USD" },
     clientTransactionId: { type: String, required: true, unique: true, index: true },
     transactionId: { type: String, default: "" },
     status: {
       type: String,
-      enum: ["pending", "approved", "canceled", "error", "refunded"],
+      enum: ["pending", "approved", "canceled", "error", "refunded", "voided"],
       default: "pending",
       index: true,
     },
