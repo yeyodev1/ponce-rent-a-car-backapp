@@ -77,10 +77,34 @@ export interface IReservation {
   documents: { license: boolean; identity: boolean };
   contract: {
     version: string;
-    status: "not_required" | "draft" | "sent" | "signed";
+    /** pending = generado y esperando aceptación; signed = aceptado electrónicamente. */
+    status: "not_required" | "draft" | "pending" | "sent" | "signed";
     fileUrl: string;
     signatureStatus: string;
     signedAt: Date | null;
+    /** Texto exacto que el cliente aceptó (congelado) y su huella SHA-256. */
+    renderedText: string;
+    hash: string;
+    acceptance: {
+      name: string;
+      documentNumber: string;
+      ip: string;
+      userAgent: string;
+      at: Date | null;
+    } | null;
+  };
+  /** Garantía física (Datafast u otro medio). No pasa por PayPhone. */
+  guarantee: {
+    status: "pending" | "held" | "released" | "charged" | "partially_charged";
+    amount: number;
+    method: "datafast" | "cash" | "transfer" | "";
+    reference: string;
+    chargedAmount: number;
+    chargeReason: string;
+    heldAt: Date | null;
+    settledAt: Date | null;
+    notes: string;
+    updatedBy: { id: string; name: string; email: string } | null;
   };
   language: "es" | "en";
   attribution: Attribution;
@@ -153,12 +177,40 @@ const reservationSchema = new Schema<IReservation>(
       version: { type: String, default: "" },
       status: {
         type: String,
-        enum: ["not_required", "draft", "sent", "signed"],
+        enum: ["not_required", "draft", "pending", "sent", "signed"],
         default: "not_required",
       },
       fileUrl: { type: String, default: "" },
       signatureStatus: { type: String, default: "" },
       signedAt: { type: Date, default: null },
+      renderedText: { type: String, default: "", select: false },
+      hash: { type: String, default: "" },
+      acceptance: {
+        type: new Schema(
+          { name: String, documentNumber: String, ip: String, userAgent: String, at: Date },
+          { _id: false },
+        ),
+        default: null,
+      },
+    },
+    guarantee: {
+      status: {
+        type: String,
+        enum: ["pending", "held", "released", "charged", "partially_charged"],
+        default: "pending",
+      },
+      amount: { type: Number, default: 0 },
+      method: { type: String, enum: ["datafast", "cash", "transfer", ""], default: "" },
+      reference: { type: String, default: "" },
+      chargedAmount: { type: Number, default: 0 },
+      chargeReason: { type: String, default: "" },
+      heldAt: { type: Date, default: null },
+      settledAt: { type: Date, default: null },
+      notes: { type: String, default: "" },
+      updatedBy: {
+        type: new Schema({ id: String, name: String, email: String }, { _id: false }),
+        default: null,
+      },
     },
     language: { type: String, enum: ["es", "en"], default: "es" },
     attribution: { type: AttributionSchema, default: () => ({}) },
