@@ -25,6 +25,15 @@ export function reservationLink(code: string, accessToken: string): string {
 }
 
 /**
+ * PDF del contrato con el token de la reserva. Sin API_PUBLIC_URL no se conoce la
+ * URL absoluta del API: se manda a la página de la reserva, que tiene el botón de descarga.
+ */
+export function contractPdfLink(code: string, accessToken: string): string {
+  if (!env.API_PUBLIC_URL) return reservationLink(code, accessToken);
+  return `${env.API_PUBLIC_URL}/api/public/reservations/${encodeURIComponent(code)}/contract.pdf?t=${accessToken}`;
+}
+
+/**
  * Correo de reserva confirmada, en el idioma que eligió el cliente, y aviso
  * al asesor. Nunca lanza: sendEmail ya absorbe los fallos.
  */
@@ -42,6 +51,7 @@ export async function sendReservationConfirmed(params: {
     settings.booking.locations.find((l) => l.code === code)?.label?.[lang] ?? code;
   const category = reservation.categoryName?.[lang] || reservation.categorySlug;
   const link = reservationLink(reservation.code, accessToken);
+  const contractLink = contractPdfLink(reservation.code, accessToken);
   const guarantee = money(reservation.pricing?.guaranteeAmount ?? settings.booking.guaranteeAmount);
 
   const lines = (reservation.pricing?.lines ?? [])
@@ -63,6 +73,7 @@ export async function sendReservationConfirmed(params: {
         guarantee: `At pick-up we will place a refundable security hold of ${guarantee} on a credit card (Datafast). It is not charged online.`,
         docs: "Please bring your original driver's license and ID or passport.",
         cta: "View my reservation",
+        contract: "Download your rental agreement (PDF)",
         help: `Questions? WhatsApp us at +${esc(settings.business.whatsapp)}.`,
       }
     : {
@@ -79,6 +90,7 @@ export async function sendReservationConfirmed(params: {
         guarantee: `Al retirar se bloquea una garantía reembolsable de ${guarantee} en tarjeta de crédito (Datafast). No se cobra en línea.`,
         docs: "Trae tu licencia de conducir y tu cédula o pasaporte originales.",
         cta: "Ver mi reserva",
+        contract: "Descargar tu contrato de alquiler (PDF)",
         help: `¿Dudas? Escríbenos por WhatsApp al +${esc(settings.business.whatsapp)}.`,
       };
 
@@ -99,6 +111,7 @@ export async function sendReservationConfirmed(params: {
     <p style="background:#f4f4f5;padding:12px 16px;border-radius:8px">${t.guarantee}</p>
     <p>${t.docs}</p>
     <p style="margin:24px 0"><a href="${esc(link)}" style="background:#111;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;font-weight:bold">${t.cta}</a></p>
+    <p><a href="${esc(contractLink)}" style="color:#1d4ed8;font-weight:bold">${t.contract}</a></p>
     <p style="color:#71717a">${t.help}</p>`;
 
   const tasks: Promise<boolean>[] = [];
