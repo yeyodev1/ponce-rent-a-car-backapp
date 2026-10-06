@@ -1,4 +1,4 @@
-import { Response, NextFunction } from "express";
+import { Request, Response, NextFunction } from "express";
 import { isValidObjectId } from "mongoose";
 import { AuthRequest } from "../types/AuthRequest";
 import { logAudit } from "../services/audit.service";
@@ -70,6 +70,13 @@ const CONTENT: Record<string, string> = {
   faqs: "la pregunta frecuente",
 };
 const DOC_KIND: Record<string, string> = { license: "la licencia", identity: "el documento de identidad" };
+const LOG_TYPE: Record<string, string> = {
+  maintenance: "un mantenimiento",
+  repair: "una reparación",
+  damage: "un daño",
+  note: "una nota",
+  status_change: "un cambio de estado",
+};
 
 interface Described {
   action: string;
@@ -214,7 +221,7 @@ async function describe(method: string, seg: string[], body: any, out: any, pre:
         const unit = await vehicleName(id);
         return method === "DELETE"
           ? { action: "vehicle.log.delete", entity: "vehicle", entityId: id, summary: `Eliminó un registro del historial de ${unit}` }
-          : { action: "vehicle.log", entity: "vehicle", entityId: id, summary: `Registró ${str(b.type, 30) || "un evento"} en el historial de ${unit}` };
+          : { action: "vehicle.log", entity: "vehicle", entityId: id, summary: `Registró ${LOG_TYPE[b.type] ?? "un evento"} en el historial de ${unit}` };
       }
       if (method === "DELETE") return { action: "vehicle.delete", entity: "vehicle", entityId: id, summary: `Eliminó la unidad ${pre || id}` };
       if (!id) {
@@ -299,6 +306,14 @@ export function auditMiddleware(req: AuthRequest, res: Response, next: NextFunct
     return json(payload);
   }) as typeof res.json;
 
+  // IP y navegador se copian ya: al terminar la respuesta el socket puede estar cerrado
+  // y req.ip quedaría vacío para cuando corren las búsquedas del resumen.
+  const forwarded = String(req.headers["x-forwarded-for"] || "").split(",")[0].trim();
+  const origin = {
+    ip: forwarded || req.ip || req.socket?.remoteAddress || "",
+    headers: { "user-agent": String(req.headers["user-agent"] || "") },
+  } as unknown as Request;
+
   const prePromise = method === "DELETE" ? labelBeforeDelete(seg).catch(() => "") : Promise.resolve("");
 
   res.on("finish", () => {
@@ -318,7 +333,7 @@ export function auditMiddleware(req: AuthRequest, res: Response, next: NextFunct
               ? { id: user.userId, name: user.name ?? "", email: user.email, role: user.accountType }
               : null,
           },
-          req,
+          origin,
         );
       } catch (error) {
         console.error("[audit] no se pudo describir la acción:", (error as Error).message);
