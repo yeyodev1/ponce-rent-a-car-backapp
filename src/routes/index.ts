@@ -13,6 +13,10 @@ import adminBookingRoutes from "./adminBooking.routes";
 import adminCrmRoutes from "./adminCrm.routes";
 import adminContentRoutes from "./adminContent.routes";
 import staffRoutes from "./staff.routes";
+import contractRoutes from "./contract.routes";
+import adminOpsRoutes from "./adminOps.routes";
+import adminContractRoutes from "./adminContract.routes";
+import adminAuditRoutes from "./adminAudit.routes";
 import { authMiddleware } from "../middlewares/auth.middleware";
 import { staffMiddleware } from "../middlewares/staff.middleware";
 
@@ -30,6 +34,7 @@ function routerApi(app: Application) {
   router.use("/public", contentRoutes);
   router.use("/public", leadRoutes);
   router.use("/public", mediaRoutes);
+  router.use("/public", contractRoutes);
   router.use("/whatsapp", whatsappRoutes);
 
   // Admin: sesión + personal se validan una sola vez aquí (authMiddleware consulta
@@ -40,6 +45,9 @@ function routerApi(app: Application) {
   router.use("/admin", adminCrmRoutes);
   router.use("/admin", adminContentRoutes);
   router.use("/admin", staffRoutes);
+  router.use("/admin", adminOpsRoutes);
+  router.use("/admin", adminContractRoutes);
+  router.use("/admin", adminAuditRoutes);
 }
 
 export default routerApi;
