@@ -8,6 +8,7 @@ import { Payment } from "../models/payment.model";
 import { Reservation } from "../models/reservation.model";
 import { assignUnitToReservation, freeVehicles, syncVehicleStatus } from "./availability.service";
 import { sendReservationConfirmed } from "./bookingEmail.service";
+import { assertSignedForCheckout } from "./contract.service";
 import { sendCapiEvent } from "./metaCapi.service";
 import { recalculatePayments } from "./payment.service";
 import { findByAccess, webhookPayload } from "./reservation.service";
@@ -69,6 +70,9 @@ export async function createCheckout(code: string, token: string, modeRaw: unkno
     throw new CustomError("Esta reserva no tiene pagos pendientes", 409);
   }
 
+  // Solo el primer pago (el que confirma) exige el contrato: el saldo de una reserva
+  // ya confirmada en el local (contrato en papel) no se bloquea.
+  if (reservation.status === "pending_payment") await assertSignedForCheckout(reservation);
   if (!isPayphoneEnabled()) throw new CustomError("Los pagos en línea aún no están activos", 503);
   if (!(amount > 0)) throw new CustomError("No hay monto por cobrar", 409);
 
