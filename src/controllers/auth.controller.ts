@@ -2,14 +2,40 @@ import { Request, Response, NextFunction } from "express";
 import { AuthRequest } from "../types/AuthRequest";
 import { CustomError } from "../errors/customError.error";
 import * as authService from "../services/auth.service";
+import { logAudit } from "../services/audit.service";
 
 /** POST /api/auth/login — body: { email, password } */
 export async function login(req: Request, res: Response, next: NextFunction) {
+  const { email, password } = req.body ?? {};
+  // Solo el correo intentado (recortado) va a la bitácora; la contraseña nunca.
+  const tried = String(email ?? "").toLowerCase().trim().slice(0, 120);
   try {
-    const { email, password } = req.body ?? {};
     const result = await authService.login(String(email ?? ""), String(password ?? ""));
+    await logAudit(
+      {
+        action: "login",
+        entity: "staff",
+        entityId: result.user.id,
+        summary: "Inició sesión en el panel",
+        actor: { id: result.user.id, name: result.user.name, email: result.user.email, role: result.user.accountType },
+      },
+      req,
+    );
     res.status(200).json(result);
   } catch (error) {
+    const status = (error as CustomError).status;
+    if (status && status < 500) {
+      await logAudit(
+        {
+          action: "login_failed",
+          entity: "staff",
+          summary: `Intento de inicio de sesión fallido con ${tried || "(sin correo)"}`,
+          success: false,
+          actor: null,
+        },
+        req,
+      );
+    }
     next(error);
   }
 }
