@@ -15,6 +15,8 @@ export const FUEL_TYPES = ["gasoline", "diesel", "hybrid", "electric"] as const;
 export type FuelType = (typeof FUEL_TYPES)[number];
 
 export interface IVehicle {
+  /** URL pública de la unidad: /vehiculos/<categoria>/<slug>. Sin la placa. */
+  slug: string;
   category: Types.ObjectId;
   brand: string;
   model: string;
@@ -38,6 +40,7 @@ export interface IVehicle {
 
 const vehicleSchema = new Schema<IVehicle>(
   {
+    slug: { type: String, unique: true, sparse: true, lowercase: true, trim: true },
     category: { type: Schema.Types.ObjectId, ref: "Category", required: true, index: true },
     brand: { type: String, required: true, trim: true },
     model: { type: String, required: true, trim: true },
