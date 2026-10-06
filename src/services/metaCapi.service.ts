@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import axios from "axios";
 import { env } from "../config/env";
+import { waitUntil } from "@vercel/functions";
 
 export type CapiEvent = "Lead" | "InitiateCheckout" | "Purchase" | "Contact";
 
@@ -25,7 +26,14 @@ function hash(value?: string): string | undefined {
  * Meta Conversions API. El eventId es el mismo que manda el Pixel desde el
  * navegador, así Meta deduplica. Nunca lanza.
  */
-export async function sendCapiEvent(input: CapiInput): Promise<void> {
+export function sendCapiEvent(input: CapiInput): Promise<void> {
+  // Igual que el webhook: puede llamarse sin await, waitUntil asegura el envío.
+  const work = deliver(input);
+  waitUntil(work);
+  return work;
+}
+
+async function deliver(input: CapiInput): Promise<void> {
   if (!env.META_PIXEL_ID || !env.META_CAPI_TOKEN) return;
   try {
     const fbc = input.fbclid ? `fb.1.${Date.now()}.${input.fbclid}` : undefined;
