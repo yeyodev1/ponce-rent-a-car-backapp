@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { env } from "../config/env";
 import * as whatsappService from "../services/whatsapp.service";
+import { waitUntil } from "@vercel/functions";
 
 // Meta espera respuesta en pocos segundos o reintenta. En Vercel el trabajo que
 // sigue después de responder puede congelarse, así que se procesa dentro de la
@@ -27,8 +28,12 @@ export async function receive(req: Request, res: Response) {
     return;
   }
   try {
+    // Si el proceso pasa del presupuesto se responde igual a Meta, pero
+    // waitUntil evita que Vercel congele la función antes de terminarlo.
+    const work = whatsappService.processWebhook(req.body);
+    waitUntil(work.catch((error) => console.error("[whatsapp] webhook:", (error as Error).message)));
     await Promise.race([
-      whatsappService.processWebhook(req.body),
+      work,
       new Promise((resolve) => setTimeout(resolve, PROCESS_BUDGET_MS)),
     ]);
   } catch (error) {
