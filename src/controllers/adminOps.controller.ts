@@ -19,7 +19,11 @@ function handle(
   return async (req: AuthRequest, res: Response, next: NextFunction) => {
     try {
       const result = await fn(req);
-      if (audit) await logAudit({ ...audit(req, result), actor: actorOf(req) }, req);
+      if (audit) {
+        await logAudit({ ...audit(req, result), actor: actorOf(req) }, req);
+        // Ya quedó un registro más rico que el genérico: el middleware no lo repite.
+        res.locals.auditLogged = true;
+      }
       if (status === 204) res.status(204).end();
       else res.status(status).json(result);
     } catch (error) {
