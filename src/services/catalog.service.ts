@@ -16,6 +16,7 @@ import {
 } from "./availability.service";
 import { parseDateInput } from "./pricing.service";
 import { getSettings, updateSettings } from "./settings.service";
+import { generateVehicleSlug } from "./vehiclePublic.service";
 
 // ---------------------------------------------------------------------------
 // Utilidades compartidas por los listados del admin
@@ -117,7 +118,7 @@ export async function getPublicCategory(slug: string, query: any = {}) {
     unitCounts(query),
     // Dato secundario: la venta es por categoría. Sin placa, dueño ni notas internas.
     Vehicle.find({ category: category._id, isActive: true, status: { $ne: "blocked" } })
-      .select("brand model year transmission fuel seats color images")
+      .select("slug brand model year transmission fuel seats color images")
       .sort({ createdAt: 1, _id: 1 })
       .lean<any[]>(),
   ]);
@@ -125,6 +126,7 @@ export async function getPublicCategory(slug: string, query: any = {}) {
     ...category,
     availableUnits: counts.get(String(category._id)) ?? 0,
     units: vehicles.map((v) => ({
+      slug: v.slug ?? "",
       brand: v.brand,
       model: v.model,
       year: v.year,
@@ -348,7 +350,10 @@ export async function adminGetVehicle(id: string) {
 }
 
 export async function adminCreateVehicle(body: any) {
-  return (await Vehicle.create(await vehicleData(body, true))).toObject();
+  const data = await vehicleData(body, true);
+  // La URL pública se fija al crear y no cambia aunque luego se edite la ficha.
+  data.slug = await generateVehicleSlug(String(data.brand), String(data.model), Number(data.year) || undefined);
+  return (await Vehicle.create(data)).toObject();
 }
 
 export async function adminUpdateVehicle(id: string, body: any) {
@@ -588,7 +593,11 @@ export async function adminUpdateSettings(body: any) {
       "depositValue",
       "guaranteeAmount",
       "locations",
+      "contractRequired",
     ]) as Record<string, any>;
+    if (booking.contractRequired !== undefined && typeof booking.contractRequired !== "boolean") {
+      throw new CustomError("Indica si el contrato es obligatorio con sí o no", 400);
+    }
     assertNonNegativeInt(booking.maxDaysAhead, "Los días máximos de anticipación");
     assertNonNegativeInt(booking.minHoursNotice, "Las horas mínimas de anticipación");
     assertNonNegativeInt(booking.holdMinutes, "Los minutos de pre-reserva");
