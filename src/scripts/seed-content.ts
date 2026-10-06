@@ -10,6 +10,7 @@ import "dotenv/config";
 import mongoose from "mongoose";
 import { env } from "../config/env";
 import { Faq, Guide, Hotel, Promotion, SeoPage } from "../models/content.model";
+import { seedContractTemplate } from "./seed-contract";
 
 type T = { es: string; en: string };
 const t = (es: string, en: string): T => ({ es, en });
@@ -789,6 +790,10 @@ async function main() {
     );
   }
   console.log(`✔ Promociones: ${promotions.length}`);
+
+  // Plantilla del contrato (v1.3): solo si no existe ninguna.
+  const contract = await seedContractTemplate();
+  console.log(contract ? "✔ Plantilla de contrato v1 creada" : "✔ Plantilla de contrato: ya existía");
 
   await mongoose.disconnect();
 }
