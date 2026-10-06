@@ -37,6 +37,8 @@ export interface ISetting {
     guaranteeAmount: number;
     mileage: { limitedKmPerDay: number; extraKmPrice: number; unlimitedPricePerDay: number };
     locations: ILocationOption[];
+    /** Con true, el cliente debe aceptar el contrato en línea antes de pagar. */
+    contractRequired: boolean;
   };
   integrations: { webhookUrl: string };
 }
@@ -78,6 +80,7 @@ const settingSchema = new Schema<ISetting>(
         unlimitedPricePerDay: { type: Number, default: 2500 },
       },
       locations: { type: [LocationSchema], default: () => [] },
+      contractRequired: { type: Boolean, default: true },
     },
     integrations: {
       webhookUrl: { type: String, default: "" },
