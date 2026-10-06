@@ -19,6 +19,7 @@
     "seed": "pnpm seed:catalog && pnpm seed:content"
   },
   "dependencies": {
+    "@vercel/functions": "^3.9.11",
     "axios": "^1.7.9",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^2.10.0",
