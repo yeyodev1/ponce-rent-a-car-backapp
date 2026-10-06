@@ -9,6 +9,7 @@ import { Payment } from "../models/payment.model";
 import { Reservation } from "../models/reservation.model";
 import { User } from "../models/user.model";
 import { Vehicle } from "../models/vehicle.model";
+import { waitUntil } from "@vercel/functions";
 
 /**
  * Registra en la bitácora cada mutación del panel (POST/PUT/PATCH/DELETE bajo
@@ -319,7 +320,9 @@ export function auditMiddleware(req: AuthRequest, res: Response, next: NextFunct
   res.on("finish", () => {
     if (res.locals.auditLogged) return;
     const user = req.user;
-    void (async () => {
+    // En Vercel la función puede congelarse al enviar la respuesta: waitUntil la
+    // mantiene viva hasta que se guarde el registro (fuera de Vercel no hace nada).
+    waitUntil((async () => {
       try {
         const pre = await prePromise;
         const d = await describe(method, seg, req.body, out, pre);
@@ -338,7 +341,7 @@ export function auditMiddleware(req: AuthRequest, res: Response, next: NextFunct
       } catch (error) {
         console.error("[audit] no se pudo describir la acción:", (error as Error).message);
       }
-    })();
+    })());
   });
   next();
 }
