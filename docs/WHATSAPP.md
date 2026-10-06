@@ -56,7 +56,7 @@ El token de prueba que aparece en la pantalla vence en 24 horas. Para producció
    ```
    https://<dominio-del-api>/api/whatsapp/webhook
    ```
-   Reemplaza `<dominio-del-api>` por la dirección del servidor (por ejemplo `api.poncesrentacar.com` o la de Vercel).
+   Reemplaza `<dominio-del-api>` por la dirección del servidor (por ejemplo `api.poncesrentacar.com.ec`).
 4. **Token de verificación:** la frase del paso 1.
 5. Pulsa **Verificar y guardar**. Si sale un error, revisa que la frase sea idéntica y que el servidor ya tenga la variable.
 6. En la misma pantalla, en **Campos del webhook**, pulsa **Administrar** y activa (suscribir) **`messages`**.
