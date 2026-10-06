@@ -1,5 +1,6 @@
 import { isValidObjectId, Model } from "mongoose";
 import { env } from "../config/env";
+import { listVehiclesForSitemap } from "./vehiclePublic.service";
 import { CustomError } from "../errors/customError.error";
 import { Category } from "../models/category.model";
 import { Faq, FAQ_TOPICS, Guide, Hotel, Promotion, SeoPage } from "../models/content.model";
@@ -89,9 +90,10 @@ function day(date: Date | string | undefined | null): string {
 /** Sitemap para Google: rutas fijas del sitio + categorías activas + guías publicadas. */
 export async function buildSitemap(): Promise<string> {
   const base = env.FRONTEND_URL.replace(/\/+$/, "");
-  const [categories, guides] = await Promise.all([
+  const [categories, guides, units] = await Promise.all([
     Category.find({ isActive: true }).select("slug updatedAt").sort({ order: 1 }).lean<{ slug: string; updatedAt?: Date }[]>(),
     Guide.find({ isPublished: true }).select("slug updatedAt").sort({ publishedAt: -1 }).lean<{ slug: string; updatedAt?: Date }[]>(),
+    listVehiclesForSitemap(),
   ]);
   const today = day(new Date());
   const urls: { loc: string; lastmod: string; priority: string }[] = [
@@ -102,6 +104,7 @@ export async function buildSitemap(): Promise<string> {
     })),
     ...categories.map((c) => ({ loc: `${base}/vehiculos/${c.slug}`, lastmod: day(c.updatedAt), priority: "0.7" })),
     ...guides.map((g) => ({ loc: `${base}/guias-de-viaje/${g.slug}`, lastmod: day(g.updatedAt), priority: "0.6" })),
+    ...units.map((u) => ({ loc: `${base}/vehiculos/${u.category}/${u.slug}`, lastmod: day(u.updatedAt), priority: "0.5" })),
   ];
   const body = urls
     .map((u) => `  <url><loc>${xmlEscape(u.loc)}</loc><lastmod>${u.lastmod}</lastmod><priority>${u.priority}</priority></url>`)
