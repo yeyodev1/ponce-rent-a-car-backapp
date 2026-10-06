@@ -6,8 +6,8 @@ Express 5 + Mongoose + TypeScript. Se despliega en Vercel como función serverle
 
 | | |
 |---|---|
-| API | https://ponce-rent-a-car-backapp.vercel.app/api (estado: `/api/health`) |
-| Sitio | https://ponce-rent-a-car-frontapp.vercel.app |
+| API | https://api.poncesrentacar.com.ec/api (estado: `/api/health`) |
+| Sitio | https://poncesrentacar.com.ec |
 | Repo del frontend | https://github.com/yeyodev1/ponce-rent-a-car-frontapp |
 
 Cada push a `main` despliega a producción en Vercel. Contrato del API en `docs/API.md`,
