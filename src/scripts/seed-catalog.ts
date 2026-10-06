@@ -3,6 +3,7 @@
  * Uso: pnpm seed:catalog            → crea lo que falte y no toca lo que el admin ya editó.
  *      pnpm seed:catalog --force    → además sobrescribe textos y precios con los de este archivo.
  * Idempotente: upsert por slug (categorías), placa (unidades) y código (coberturas/extras).
+ * Las unidades sin slug público reciben uno (marca-modelo-año-xxxx); las que ya tienen se respetan.
  * Los campos de ficha de las unidades (combustible, asientos, km, descripción) solo
  * se completan si están vacíos: nunca pisan lo que el admin ya cargó.
  */
@@ -14,6 +15,7 @@ import { Coverage } from "../models/coverage.model";
 import { Extra } from "../models/extra.model";
 import { Vehicle } from "../models/vehicle.model";
 import { getSettings } from "../services/settings.service";
+import { backfillVehicleSlugs } from "../services/vehiclePublic.service";
 
 const FORCE = process.argv.includes("--force");
 
@@ -504,6 +506,10 @@ async function main() {
     }
   }
   console.log(`✔ ${vehicles.length} unidades de ejemplo`);
+
+  // URL pública por unidad (v1.3): solo a las que no tienen slug, las demás conservan el suyo.
+  const slugged = await backfillVehicleSlugs();
+  console.log(`✔ ${slugged} unidades sin slug recibieron uno`);
 
   for (const c of coverages) {
     const { code, ...data } = c;
