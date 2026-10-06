@@ -19,6 +19,7 @@ import adminContractRoutes from "./adminContract.routes";
 import adminAuditRoutes from "./adminAudit.routes";
 import { authMiddleware } from "../middlewares/auth.middleware";
 import { staffMiddleware } from "../middlewares/staff.middleware";
+import { auditMiddleware } from "../middlewares/audit.middleware";
 
 function routerApi(app: Application) {
   const router = express.Router();
@@ -39,7 +40,7 @@ function routerApi(app: Application) {
 
   // Admin: sesión + personal se validan una sola vez aquí (authMiddleware consulta
   // la cuenta en la base). Cada router agrega adminMiddleware en lo que es solo del admin.
-  router.use("/admin", authMiddleware, staffMiddleware);
+  router.use("/admin", authMiddleware, staffMiddleware, auditMiddleware);
   router.use("/admin", adminFleetRoutes);
   router.use("/admin", adminBookingRoutes);
   router.use("/admin", adminCrmRoutes);
