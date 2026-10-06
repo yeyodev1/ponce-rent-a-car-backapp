@@ -2,6 +2,7 @@ import crypto from "crypto";
 import axios from "axios";
 import { env } from "../config/env";
 import { Setting } from "../models/setting.model";
+import { waitUntil } from "@vercel/functions";
 
 export type WebhookEvent =
   | "lead.created"
@@ -14,7 +15,15 @@ export type WebhookEvent =
  * Webhook saliente para conectar un CRM externo sin tocar código.
  * Nunca lanza: un CRM caído no puede romper una reserva.
  */
-export async function emitWebhook(event: WebhookEvent, data: unknown): Promise<void> {
+export function emitWebhook(event: WebhookEvent, data: unknown): Promise<void> {
+  // Se llama sin await desde los servicios: waitUntil mantiene viva la función
+  // en Vercel hasta que el CRM reciba el evento.
+  const work = deliver(event, data);
+  waitUntil(work);
+  return work;
+}
+
+async function deliver(event: WebhookEvent, data: unknown): Promise<void> {
   try {
     const setting = await Setting.findOne({ key: "main" }).lean<{ integrations?: { webhookUrl?: string } }>();
     const url = setting?.integrations?.webhookUrl || env.WEBHOOK_URL;
