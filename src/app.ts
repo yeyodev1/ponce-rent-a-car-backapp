@@ -13,8 +13,8 @@ const whitelist = [
   "http://127.0.0.1:5173",
   "http://localhost:8100",
   "http://localhost:8101",
-  // "https://cliente.com",
-  // "https://www.cliente.com",
+  "https://poncesrentacar.com.ec",
+  "https://www.poncesrentacar.com.ec",
   ...env.CORS_ORIGINS,
 ];
 
