@@ -300,3 +300,51 @@ Campos nuevos: `fuel` (`gasoline|diesel|hybrid|electric`), `seats`, `mileageKm`,
 
 ### Eliminar personal
 - `DELETE /admin/staff/:id` (solo admin) → 204. No se puede eliminar a uno mismo ni al último admin activo. Los pagos/reservas conservan el snapshot `registeredBy` / `createdBy`, así que el historial no se pierde.
+
+---
+
+## 8. v1.3 — Operación completa (pedidos del chat del cliente)
+
+### A. Entrega y devolución (actas) + historial del vehículo  — admin (staff)
+- `GET /admin/reservations/:id/inspections` → `{ delivery: Inspection | null, return: Inspection | null, comparison: { kmDriven, includedKm, extraKm, extraKmCharge, fuelDiff (octavos, negativo = faltó), newDamages: number } | null }`.
+- `POST /admin/reservations/:id/inspections` `{ type: "delivery"|"return", mileageKm, fuelLevel (0-8), photos: [{url,label}], damages: [{zone, description, severity, photo}], checklist: {...}, notes, customerAgreedName }` → 201.
+  - `delivery`: solo con reserva `confirmed` y unidad asignada; **pasa la reserva a `delivered`** (En curso) en la misma operación, actualiza `vehicle.mileageKm`.
+  - `return`: solo con reserva `delivered` y con acta de entrega; `mileageKm >= km de entrega`; marca `isNew` en daños que no estaban en la entrega; **pasa la reserva a `completed`**, actualiza `vehicle.mileageKm`; si hay daños nuevos crea un `VehicleLog` tipo `damage`.
+  - El PATCH de estado a `delivered`/`completed` sigue funcionando (sin acta) por compatibilidad, pero el panel usa las actas.
+  - Las fotos se suben con `POST /admin/uploads` (respaldo en Media) y aquí se mandan sus URLs.
+- `PUT /admin/reservations/:id/inspections/:type` — corregir un acta (solo admin).
+- `GET /admin/vehicles/:id/history` → `{ vehicle, timeline: [{ kind: "reservation"|"inspection"|"log", at, title, detail, reservationCode?, mileageKm?, cost?, by? }], stats: { rentals, kmDriven, revenue, lastInspectionAt } }` ordenado del más reciente al más antiguo.
+- `GET|POST /admin/vehicles/:id/logs`, `DELETE /admin/vehicles/:id/logs/:logId` (DELETE solo admin). `POST { type, date, mileageKm, cost (centavos), description }`.
+
+### B. Garantía y anulación de pagos — admin (staff salvo donde se indica)
+- `reservation.guarantee` (ver modelo): `amount` se inicializa con `pricing.guaranteeAmount`.
+- `PATCH /admin/reservations/:id/guarantee` `{ action: "hold"|"release"|"charge", amount?, method?, reference?, chargedAmount?, chargeReason?, notes? }`:
+  - `hold` (pending → held): registra método (datafast/cash/transfer), referencia/voucher y monto.
+  - `release` (held → released).
+  - `charge` (held → charged | partially_charged según `chargedAmount` vs `amount`): exige `chargeReason`; **solo admin**.
+  - Transiciones inválidas → 409.
+- `POST /admin/payments/:id/void` `{ reason }` — anula un pago registrado por error (no hubo dinero): status `voided`, `voidedAt`, `voidReason`, `voidedBy`; solo pagos `approved` **manuales**; recalcula `paymentStatus` (los anulados no cuentan). Staff puede anular dentro de las 24 h siguientes al registro; después, solo admin. Diferencia con reembolso: reembolso = sí hubo dinero y se devolvió.
+- Dashboard `kpis`/listados y CSV de pagos reflejan `voided`.
+
+### C. Contrato y aceptación electrónica
+- Plantillas (solo admin): `GET /admin/contract-templates`, `GET /admin/contract-templates/active`, `POST /admin/contract-templates` `{ title: I18nText, body: I18nText }` (crea **versión nueva** y la activa; las anteriores quedan inactivas e inmutables), `POST /admin/contract-templates/preview` `{ body, reservationId? }` → `{ text }`.
+- Variables disponibles (documentadas en `GET /admin/contract-templates/variables`): `{{reserva.codigo}} {{reserva.retiro}} {{reserva.devolucion}} {{reserva.lugarRetiro}} {{reserva.lugarDevolucion}} {{reserva.dias}} {{reserva.kilometraje}} {{reserva.cobertura}} {{reserva.extras}} {{reserva.total}} {{reserva.garantia}} {{cliente.nombre}} {{cliente.documento}} {{cliente.email}} {{cliente.telefono}} {{cliente.pais}} {{cliente.licencia}} {{cliente.licenciaVence}} {{vehiculo.categoria}} {{vehiculo.marca}} {{vehiculo.modelo}} {{vehiculo.anio}} {{vehiculo.placa}} {{vehiculo.color}} {{empresa.nombre}} {{empresa.telefono}} {{empresa.direccion}} {{fecha.hoy}}`. Si la reserva aún no tiene unidad, `vehiculo.*` dice "Por asignar".
+- Seed: plantilla v1 de ejemplo ES/EN (cláusulas típicas de alquiler en Ecuador, marcada "Texto de ejemplo: reemplazar por el contrato revisado por su abogado").
+- Público (token de la reserva):
+  - `GET /public/reservations/:code/contract?t=` → `{ status, version, title, text, hash?, acceptance? }` (genera el texto con la plantilla activa si aún no está aceptado; con unidad asignada o "Por asignar").
+  - `POST /public/reservations/:code/contract/accept?t=` `{ name, documentNumber, accepted: true }` → valida que `name`≈nombre del cliente (normalizado, sin tildes/mayúsculas) y `documentNumber` = documento del cliente; congela `renderedText`, calcula `hash` SHA-256, guarda `acceptance {name, documentNumber, ip, userAgent, at}`, `status: "signed"`, `signedAt`, `version`. Idempotente. Estados `cancelled`/`expired` → 409.
+  - `GET /public/reservations/:code/contract.pdf?t=` → PDF (pdfkit) del contrato: si está firmado, el texto congelado + bloque "Aceptado electrónicamente por … el … desde IP … · Huella SHA-256 …"; si no, marca de agua "BORRADOR".
+- Admin: `GET /admin/reservations/:id/contract` (igual al público, + `renderedText`), `GET /admin/reservations/:id/contract.pdf`.
+- Regla de negocio: setting `booking.contractRequired` (default `true`): con `true`, `POST /public/reservations/:code/checkout` responde 409 `{ message: "Acepta el contrato antes de pagar", errorCode: "contract_required" }` si el contrato no está firmado. El panel puede confirmar sin contrato (reservas presenciales firmadas en papel), mostrando advertencia.
+- Correo de confirmación incluye el enlace al PDF.
+
+### D. Registro de accesos (auditoría) — solo admin
+- Se registran: `login` / `login_failed` (con email intentado en summary), `logout` (si existe), y todas las mutaciones del panel (POST/PUT/PATCH/DELETE bajo `/admin`) con acción legible, entidad e id; además acciones sensibles explícitas (cambio de estado de reserva, pagos, reembolsos, anulaciones, garantía, actas, contrato, personal, exportaciones CSV, configuración). Servicio: `logAudit()` en `src/services/audit.service.ts`.
+- `GET /admin/audit?actor=&action=&entity=&from=&to=&q=&page=` → `{ items, total, page, pages }`; `GET /admin/audit/export.csv`.
+- Retención 1 año (TTL).
+
+### E. Página pública por vehículo
+- `vehicle.slug` (auto: `marca-modelo-anio-<4 hex>`, sin placa; se genera al crear y por migración idempotente en el seed para las existentes).
+- `GET /public/vehicles/:slug` → `{ slug, brand, model, year, transmission, fuel, seats, color, description, images, category: { slug, name, pricePerDay, passengers, luggage, features }, available: boolean }` (solo unidades activas no bloqueadas).
+- `GET /public/categories/:slug` → `units[]` agrega `slug`.
+- Sitemap incluye `/vehiculos/<categoria>/<slug>`.
