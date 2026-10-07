@@ -31,7 +31,9 @@ async function ensureApp(): Promise<Express> {
 
   const app = await arranque;
 
-  if (!isConnected()) {
+  // En frío el primer intento a Atlas puede fallar: se reintenta antes de
+  // atender, para que la primera petición (p. ej. un login) no reciba un 503.
+  for (let intento = 0; intento < 3 && !isConnected(); intento += 1) {
     const reconectado = await dbConnect();
     if (reconectado) await seedAdmin();
   }
