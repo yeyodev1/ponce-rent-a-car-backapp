@@ -72,6 +72,6 @@ repo, `CLAUDE.md`, `docs/API.md` y `docs/WHATSAPP.md`.
 2. **Frontend:** `vercel` en `ponce-rent-a-car-frontapp` con `VITE_API_BASE_URL=https://api.<dominio>/api`,
    `VITE_GA4_ID` y `VITE_META_PIXEL_ID`.
 3. Agregar el dominio del frontend a `CORS_ORIGINS` y `FRONTEND_URL` de la API.
-4. PayPhone Developer: dominio web y URL de respuesta `https://<dominio>/pago/respuesta`.
+4. PayPhone Developer: dominio web `poncesrentacar.com.ec` y URL de respuesta `https://poncesrentacar.com.ec/pay-response` (alias de `/pago/respuesta`).
 5. Meta: webhook `https://api.<dominio>/api/whatsapp/webhook` (ver `docs/WHATSAPP.md`).
 6. Cargar datos iniciales: `pnpm seed` (categorías, coberturas, extras, FAQs, guías, SEO). Idempotente.
