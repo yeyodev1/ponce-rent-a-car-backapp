@@ -2,7 +2,7 @@ import { CustomError } from "../errors/customError.error";
 import { Category } from "../models/category.model";
 import { Coverage } from "../models/coverage.model";
 import { Extra } from "../models/extra.model";
-import { IPriceLine, IPricing } from "../models/reservation.model";
+import { BILLING_TYPES, BillingType, IPriceLine, IPricing } from "../models/reservation.model";
 import { ISetting } from "../models/setting.model";
 import { I18nText } from "../models/shared.schema";
 import { countAvailableUnits } from "./availability.service";
@@ -84,7 +84,12 @@ export interface QuoteInput {
   coverage: string;
   extras: QuoteExtraInput[];
   promoCode: string;
+  /** final = consumidor final (precio del paso 1); invoice = factura con datos (+ IVA 15%). */
+  billingType: BillingType;
 }
+
+/** IVA vigente en Ecuador (2024+). Solo se suma cuando el cliente pide factura con datos. */
+export const TAX_RATE = 0.15;
 
 export interface QuoteResult {
   days: number;
@@ -95,8 +100,19 @@ export interface QuoteResult {
   deposit: number;
   guaranteeAmount: number;
   mileageInfo: { includedKm: number | null; extraKmPrice: number };
+  /** Conceptos que se cotizan aparte (entrega en otra dirección). Texto en español. */
+  pendingItems: string[];
   errors: string[];
   errorCodes: QuoteErrorCode[];
+}
+
+export function parseBillingType(raw: unknown): BillingType {
+  const type = raw && typeof raw === "object" ? (raw as { type?: unknown }).type : raw;
+  if (type === undefined || type === null || type === "") return "final";
+  if (!(BILLING_TYPES as readonly string[]).includes(String(type))) {
+    throw new CustomError("El tipo de facturación debe ser consumidor final o factura con datos", 400);
+  }
+  return String(type) as BillingType;
 }
 
 /** Normaliza y valida la forma del body. Errores de forma → 400; reglas de negocio → `errors`. */
@@ -116,7 +132,8 @@ export function parseQuoteInput(body: any): QuoteInput {
   const returnLocation = String(b.returnLocation ?? "").trim() || pickupLocation;
   if (!pickupLocation) throw new CustomError("Elige el lugar de retiro", 400);
 
-  const mileage = b.mileage === "unlimited" ? "unlimited" : "limited";
+  // Ilimitado es lo incluido por defecto; "limitado" es la opción para ahorrar.
+  const mileage = b.mileage === "limited" ? "limited" : "unlimited";
   if (b.mileage && !["limited", "unlimited"].includes(b.mileage)) {
     throw new CustomError("Tipo de kilometraje inválido", 400);
   }
@@ -151,7 +168,30 @@ export function parseQuoteInput(body: any): QuoteInput {
       .toLowerCase(),
     extras: [...extrasMap].map(([code, quantity]) => ({ code, quantity })),
     promoCode: String(b.promoCode ?? "").trim(),
+    billingType: parseBillingType(b.billing),
   };
+}
+
+/** Kilometraje de la categoría si lo tiene; si no, el general. */
+export function mileageRules(category: any, booking: ISetting["booking"]) {
+  const general = booking.mileage;
+  const own = category?.mileage;
+  return {
+    limitedKmPerDay: Number(own?.limitedKmPerDay ?? general.limitedKmPerDay) || 0,
+    extraKmPrice: Number(own?.extraKmPrice ?? general.extraKmPrice) || 0,
+    unlimitedPricePerDay: Number(own?.unlimitedPricePerDay ?? general.unlimitedPricePerDay) || 0,
+    limitedDiscountPerDay: Number(own?.limitedDiscountPerDay ?? general.limitedDiscountPerDay) || 0,
+  };
+}
+
+/** Garantía de la categoría; 0 = la general de la configuración. */
+export function guaranteeFor(category: any, booking: ISetting["booking"]): number {
+  return Number(category?.guarantee) > 0 ? Number(category.guarantee) : booking.guaranteeAmount;
+}
+
+/** Hotel/domicilio u otra dirección sin tarifa cargada: el traslado se cotiza al coordinar. */
+function isPendingLocation(loc: { code: string; fee: number }): boolean {
+  return (loc.code === "other" || loc.code === "hotel") && !(loc.fee > 0);
 }
 
 /** Ventana de reserva online: entre ahora+minHoursNotice y el fin del día hoy+maxDaysAhead (Guayaquil). */
@@ -286,27 +326,37 @@ export async function computeQuote(
     amount: category.pricePerDay * days,
   });
 
-  const { limitedKmPerDay, extraKmPrice, unlimitedPricePerDay } = booking.mileage;
+  const { limitedKmPerDay, extraKmPrice, unlimitedPricePerDay, limitedDiscountPerDay } =
+    mileageRules(category, booking);
   const includedKm = input.mileage === "limited" ? limitedKmPerDay * days : null;
-  lines.push(
-    input.mileage === "limited"
-      ? {
-          key: "mileage",
-          label: {
-            es: `Kilometraje limitado (${includedKm} km incluidos)`,
-            en: `Limited mileage (${includedKm} km included)`,
-          },
-          amount: 0,
-        }
-      : {
-          key: "mileage",
-          label: {
-            es: `Kilometraje ilimitado × ${days} ${dayWord.es}`,
-            en: `Unlimited mileage × ${days} ${dayWord.en}`,
-          },
-          amount: unlimitedPricePerDay * days,
-        },
-  );
+  if (input.mileage === "limited") {
+    // Limitado = opción para ahorrar: descuento por día (o $0 si la categoría no lo da).
+    const saving = limitedDiscountPerDay * days;
+    lines.push({
+      key: "mileage",
+      label: {
+        es: `Kilometraje limitado (${includedKm} km incluidos)${saving ? " · ahorro" : ""}`,
+        en: `Limited mileage (${includedKm} km included)${saving ? " · savings" : ""}`,
+      },
+      amount: -saving,
+    });
+  } else if (unlimitedPricePerDay > 0) {
+    lines.push({
+      key: "mileage",
+      label: {
+        es: `Kilometraje ilimitado × ${days} ${dayWord.es}`,
+        en: `Unlimited mileage × ${days} ${dayWord.en}`,
+      },
+      amount: unlimitedPricePerDay * days,
+    });
+  } else {
+    // El precio base ya incluye kilometraje ilimitado: se muestra en $0 para que se vea.
+    lines.push({
+      key: "mileage",
+      label: { es: "Kilometraje ilimitado incluido", en: "Unlimited mileage included" },
+      amount: 0,
+    });
+  }
 
   if (coverage) {
     lines.push({
@@ -343,13 +393,23 @@ export async function computeQuote(
   }
 
   // El cargo de ubicación se cobra en cada extremo solo si son lugares distintos;
-  // si retiro y devolución coinciden se cobra una vez.
-  const locationFee =
-    (pickupLoc.fee || 0) + (input.returnLocation !== input.pickupLocation ? returnLoc.fee || 0 : 0);
+  // si retiro y devolución coinciden se cobra una vez. Otra dirección sin tarifa
+  // cargada no bloquea la reserva: queda "por cotizar" al coordinar la entrega.
+  const sameEnds = input.returnLocation === input.pickupLocation;
+  const locationFee = (pickupLoc.fee || 0) + (!sameEnds ? returnLoc.fee || 0 : 0);
+  const pendingLocation = isPendingLocation(pickupLoc) || (!sameEnds && isPendingLocation(returnLoc));
+  const pendingItems: string[] = [];
+  if (pendingLocation) {
+    pendingItems.push("Entrega o recepción en otra dirección: valor por cotizar al coordinar la entrega");
+  }
   lines.push({
     key: "location",
-    label:
-      input.returnLocation !== input.pickupLocation
+    label: pendingLocation
+      ? {
+          es: "Entrega/recepción en otra dirección: valor por cotizar",
+          en: "Delivery/return at another address: to be quoted",
+        }
+      : !sameEnds
         ? {
             es: `Entrega: ${pickupLoc.label.es} · Devolución: ${returnLoc.label.es}`,
             en: `Pick-up: ${pickupLoc.label.en} · Return: ${returnLoc.label.en}`,
@@ -359,10 +419,23 @@ export async function computeQuote(
             en: `Pick-up and return: ${pickupLoc.label.en}`,
           },
     amount: locationFee,
+    ...(pendingLocation ? { pending: true } : {}),
   });
+
+  // Factura con datos: se suma el IVA sobre todo lo anterior. Consumidor final
+  // conserva el precio que vio desde el paso 1 (simplificada).
+  const subtotal = lines.reduce((sum, l) => sum + Math.round(l.amount), 0);
+  if (input.billingType === "invoice") {
+    lines.push({
+      key: "tax",
+      label: { es: "IVA 15%", en: "VAT 15%" },
+      amount: Math.round(subtotal * TAX_RATE),
+    });
+  }
 
   const total = lines.reduce((sum, l) => sum + Math.round(l.amount), 0);
   const deposit = computeDeposit(booking, total);
+  const guaranteeAmount = guaranteeFor(category, booking);
 
   const { errors, errorCodes } =
     options.window === "staff"
@@ -394,8 +467,9 @@ export async function computeQuote(
     lines,
     total,
     deposit,
-    guaranteeAmount: booking.guaranteeAmount,
+    guaranteeAmount,
     mileageInfo: { includedKm, extraKmPrice },
+    pendingItems,
     errors,
     errorCodes,
   };
@@ -407,9 +481,10 @@ export async function computeQuote(
     lines,
     total,
     deposit,
-    guaranteeAmount: booking.guaranteeAmount,
+    guaranteeAmount,
     includedKm,
     extraKmPrice,
+    pendingItems,
   };
 
   return {

@@ -33,6 +33,7 @@ export const CONTRACT_VARIABLES: { key: string; label: string; group: string }[]
   { key: "cliente.pais", label: "País de residencia", group: "Cliente" },
   { key: "cliente.licencia", label: "Número de licencia", group: "Cliente" },
   { key: "cliente.licenciaVence", label: "Vencimiento de la licencia", group: "Cliente" },
+  { key: "cliente.facturacion", label: "Datos de facturación", group: "Cliente" },
   { key: "vehiculo.categoria", label: "Categoría", group: "Vehículo" },
   { key: "vehiculo.marca", label: "Marca", group: "Vehículo" },
   { key: "vehiculo.modelo", label: "Modelo", group: "Vehículo" },
@@ -153,6 +154,13 @@ export async function buildContext(reservation: any): Promise<Record<string, str
     .join(", ");
   const docType =
     customer?.documentType === "passport" ? (en ? "passport" : "pasaporte") : en ? "national ID" : "cédula";
+  const billing = reservation.billing ?? {};
+  const billingText =
+    billing.type === "invoice"
+      ? `${en ? "Invoice to" : "Factura a"} ${billing.name} (${billing.idNumber})${billing.address ? ` · ${billing.address}` : ""}`
+      : en
+        ? "Final consumer (simplified invoice)"
+        : "Consumidor final (factura simplificada)";
 
   return {
     "reserva.codigo": reservation.code,
@@ -167,7 +175,12 @@ export async function buildContext(reservation: any): Promise<Record<string, str
     "reserva.total": money(pricing.total),
     "reserva.garantia": money(pricing.guaranteeAmount ?? settings.booking.guaranteeAmount),
     "cliente.nombre": customer?.name ?? "",
-    "cliente.documento": customer ? `${customer.documentNumber} (${docType})` : "",
+    "cliente.documento": customer?.documentNumber
+      ? `${customer.documentNumber} (${docType})`
+      : en
+        ? "To be verified at pick-up"
+        : "Por verificar al retirar",
+    "cliente.facturacion": billingText,
     "cliente.email": customer?.email ?? "",
     "cliente.telefono": customer?.phone ?? "",
     "cliente.pais": countryName(customer?.country ?? "", lang),
@@ -240,6 +253,13 @@ async function contractRequired(): Promise<boolean> {
   return settings.booking.contractRequired !== false;
 }
 
+/** Lo que ve el cliente: sin la huella SHA-256 (es un dato técnico; el panel sí la muestra). */
+async function publicContractView(reservation: any) {
+  const { hash: _hash, ...view } = await contractView(reservation, false);
+  void _hash;
+  return { ...view, required: await contractRequired() };
+}
+
 /** renderedText no viaja por defecto (select: false): se pide explícitamente. */
 async function loadWithText(filter: Record<string, unknown>) {
   return Reservation.findOne(filter).select("+contract.renderedText").lean<any>();
@@ -252,37 +272,44 @@ async function loadWithText(filter: Record<string, unknown>) {
 export async function getPublicContract(code: string, token: string) {
   const access = await findByAccess(code, token);
   const reservation = await loadWithText({ _id: access._id });
-  return { ...(await contractView(reservation, false)), required: await contractRequired() };
+  return publicContractView(reservation);
 }
 
+/**
+ * Aceptación electrónica con una sola casilla: el cliente confirma que sus
+ * datos son correctos y acepta las condiciones. Nombre y documento son
+ * opcionales; si los manda, deben coincidir con los de la reserva.
+ */
 export async function acceptContract(code: string, token: string, body: any, meta: RequestMeta) {
   const access = await findByAccess(code, token);
   const reservation = await loadWithText({ _id: access._id });
   // Idempotente: una segunda aceptación devuelve la primera sin tocarla.
   if (reservation.contract?.status === "signed" && reservation.contract?.renderedText) {
-    return { ...(await contractView(reservation, false)), required: await contractRequired() };
+    return publicContractView(reservation);
   }
   if (CLOSED.includes(reservation.status)) {
     throw new CustomError("Esta reserva ya no está activa", 409).withCode("reservation_closed");
   }
   if (body?.accepted !== true) {
-    throw new CustomError("Marca la casilla de aceptación del contrato", 400).withCode("not_accepted");
+    throw new CustomError("Marca la casilla de aceptación", 400).withCode("not_accepted");
   }
-  const name = String(body?.name ?? "").trim().slice(0, 200);
-  const documentNumber = normalizeDocument(String(body?.documentNumber ?? "")).slice(0, 30);
   const customer = await Customer.findById(reservation.customer).lean<any>();
   if (!customer) throw new CustomError("No se encontró el conductor de la reserva", 404);
-  if (!name || normalizeName(name) !== normalizeName(customer.name)) {
+  const givenName = String(body?.name ?? "").trim().slice(0, 200);
+  const givenDocument = normalizeDocument(String(body?.documentNumber ?? "")).slice(0, 30);
+  if (givenName && normalizeName(givenName) !== normalizeName(customer.name)) {
     throw new CustomError(
       "El nombre no coincide con el del conductor de la reserva. Escríbelo tal como aparece en tu documento",
       400,
     ).withCode("name_mismatch");
   }
-  if (!documentNumber || documentNumber !== normalizeDocument(customer.documentNumber)) {
+  if (givenDocument && customer.documentNumber && givenDocument !== normalizeDocument(customer.documentNumber)) {
     throw new CustomError("El número de documento no coincide con el de la reserva", 400).withCode(
       "document_mismatch",
     );
   }
+  const name = String(customer.name ?? "").slice(0, 200);
+  const documentNumber = normalizeDocument(customer.documentNumber || givenDocument).slice(0, 30);
 
   const view = await contractView(reservation, false);
   const at = new Date();
@@ -312,7 +339,7 @@ export async function acceptContract(code: string, token: string, body: any, met
     .select("+contract.renderedText")
     .lean<any>();
   const fresh = updated ?? (await loadWithText({ _id: reservation._id }));
-  return { ...(await contractView(fresh, false)), required: await contractRequired() };
+  return publicContractView(fresh);
 }
 
 /** Datos que necesita el PDF (público o admin). */

@@ -1,6 +1,14 @@
 import mongoose, { Schema } from "mongoose";
 import { I18nText, I18nTextSchema, SeoFields, SeoSchema } from "./shared.schema";
 
+/** Kilometraje propio de la categoría; null = se usan los valores generales de la configuración. */
+export interface ICategoryMileage {
+  limitedKmPerDay: number;
+  extraKmPrice: number;
+  unlimitedPricePerDay: number;
+  limitedDiscountPerDay: number;
+}
+
 /** Lo que se vende es la categoría (necesidad), no la marca. */
 export interface ICategory {
   slug: string;
@@ -12,6 +20,9 @@ export interface ICategory {
   transmission: "automatic" | "manual";
   airConditioning: boolean;
   pricePerDay: number;
+  /** Garantía (centavos) que se gestiona al retirar. 0 = la general de la configuración. */
+  guarantee: number;
+  mileage: ICategoryMileage | null;
   image: string;
   gallery: string[];
   exampleModels: string;
@@ -32,6 +43,19 @@ const categorySchema = new Schema<ICategory>(
     transmission: { type: String, enum: ["automatic", "manual"], default: "automatic" },
     airConditioning: { type: Boolean, default: true },
     pricePerDay: { type: Number, required: true, min: 0 },
+    guarantee: { type: Number, default: 0, min: 0 },
+    mileage: {
+      type: new Schema<ICategoryMileage>(
+        {
+          limitedKmPerDay: { type: Number, default: 150 },
+          extraKmPrice: { type: Number, default: 25 },
+          unlimitedPricePerDay: { type: Number, default: 0 },
+          limitedDiscountPerDay: { type: Number, default: 0 },
+        },
+        { _id: false },
+      ),
+      default: null,
+    },
     image: { type: String, default: "" },
     gallery: { type: [String], default: [] },
     exampleModels: { type: String, default: "" },

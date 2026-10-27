@@ -35,7 +35,14 @@ export interface ISetting {
     depositMode: "fixed" | "percent" | "none";
     depositValue: number;
     guaranteeAmount: number;
-    mileage: { limitedKmPerDay: number; extraKmPrice: number; unlimitedPricePerDay: number };
+    mileage: {
+      limitedKmPerDay: number;
+      extraKmPrice: number;
+      /** 0 = el precio base ya incluye kilometraje ilimitado. */
+      unlimitedPricePerDay: number;
+      /** Ahorro por día al elegir kilometraje limitado (centavos). */
+      limitedDiscountPerDay: number;
+    };
     locations: ILocationOption[];
     /** Con true, el cliente debe aceptar el contrato en línea antes de pagar. */
     contractRequired: boolean;
@@ -71,13 +78,15 @@ const settingSchema = new Schema<ISetting>(
       maxDaysAhead: { type: Number, default: 5 },
       minHoursNotice: { type: Number, default: 3 },
       holdMinutes: { type: Number, default: 20 },
-      depositMode: { type: String, enum: ["fixed", "percent", "none"], default: "fixed" },
-      depositValue: { type: Number, default: 5000 },
+      // La reserva en línea se asegura con el 30% del total (pedido del cliente, oct-2026).
+      depositMode: { type: String, enum: ["fixed", "percent", "none"], default: "percent" },
+      depositValue: { type: Number, default: 30 },
       guaranteeAmount: { type: Number, default: 50000 },
       mileage: {
         limitedKmPerDay: { type: Number, default: 150 },
         extraKmPrice: { type: Number, default: 25 },
         unlimitedPricePerDay: { type: Number, default: 2500 },
+        limitedDiscountPerDay: { type: Number, default: 0 },
       },
       locations: { type: [LocationSchema], default: () => [] },
       contractRequired: { type: Boolean, default: true },

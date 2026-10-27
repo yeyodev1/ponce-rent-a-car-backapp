@@ -348,3 +348,34 @@ Campos nuevos: `fuel` (`gasoline|diesel|hybrid|electric`), `seats`, `mileageKm`,
 - `GET /public/vehicles/:slug` → `{ slug, brand, model, year, transmission, fuel, seats, color, description, images, category: { slug, name, pricePerDay, passengers, luggage, features }, available: boolean }` (solo unidades activas no bloqueadas).
 - `GET /public/categories/:slug` → `units[]` agrega `slug`.
 - Sitemap incluye `/vehiculos/<categoria>/<slug>`.
+
+---
+
+## 9. v2 — Correcciones de octubre 2026 (flujo de reserva)
+
+### Categorías (`GET /api/public/categories`, CRUD admin)
+- `guarantee` (centavos): garantía que se gestiona al retirar. `0` = se usa `booking.guaranteeAmount`.
+- `mileage`: `null` (usa la configuración general) o `{ limitedKmPerDay, extraKmPrice, unlimitedPricePerDay, limitedDiscountPerDay }`.
+- Semántica nueva del kilometraje: el precio base **incluye kilometraje ilimitado** cuando `unlimitedPricePerDay` es `0`;
+  "limitado" es la opción para ahorrar (`limitedDiscountPerDay` × días, línea negativa `mileage`). Si el descuento es `0` la línea queda en `$0`.
+- `booking.mileage.limitedDiscountPerDay` también existe en `/public/config` y en `/admin/settings`.
+- El `mileage` por defecto de una reserva nueva es `unlimited`.
+
+### Cotización y precio (`POST /api/public/quote`, `pricing` de la reserva)
+- `guaranteeAmount` sale de la categoría (o de la configuración si la categoría trae `0`). Nunca entra en `total`.
+- `billing: { type: "final" | "invoice" }` en el body. Con `invoice` se añade la línea `tax` "IVA 15%" sobre el subtotal; con `final` no hay IVA (precio del paso 1).
+- Líneas con `pending: true` (y `amount: 0`): entrega o recepción en `other`, o en `hotel` sin tarifa cargada → "valor por cotizar". No bloquea la reserva.
+- `pendingItems: string[]` (español) resume esos conceptos; viaja en el quote y en `pricing`.
+- Depósito: por defecto `depositMode: "percent"`, `depositValue: 30`.
+
+### Reserva (`POST /api/public/reservations`)
+- `driver`: solo `name`, `email`, `phone` (E.164) y `country` son obligatorios. `documentType`, `documentNumber`, `licenseNumber`, `licenseExpiresAt`, `licenseCountry` son opcionales; si llegan, se validan (licencia vigente hasta la devolución).
+- `billing: { type, name, idNumber, address }`. Con `invoice` se exigen `name` e `idNumber` (RUC o cédula). Se guarda en la reserva y viaja en `GET /public/reservations/:code`, en el detalle admin y en el contrato (`{{cliente.facturacion}}`).
+- Cliente: se reconoce por documento si lo trae; si no, por correo. Nunca se crean dos clientes con el mismo correo. El personal completa cédula/licencia en `PATCH /admin/customers/:id` (`documentType`, `documentNumber`; 409 si el documento ya es de otro cliente).
+
+### Contrato
+- `POST /public/reservations/:code/contract/accept` solo exige `{ accepted: true }`. `name` y `documentNumber` son opcionales (si llegan deben coincidir). La aceptación guarda el nombre del cliente de la reserva.
+- El endpoint público (y el PDF público) ya no devuelven `hash`; el panel sí lo ve.
+
+### Migración
+`pnpm migrate:v2` (idempotente): renombra y reprecia las categorías por slug (sin tocar imágenes), fija garantías por categoría, pasa el depósito a 30%, cambia el índice único de clientes a parcial y sincroniza índices.

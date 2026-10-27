@@ -115,11 +115,11 @@ function acceptanceBlock(doc: PDFKit.PDFDocument, input: ContractPdfInput) {
   const top = doc.y;
   const lines = en
     ? [
-        `Electronically accepted by ${a.name} (ID ${a.documentNumber})`,
+        `Electronically accepted by ${a.name}${a.documentNumber ? ` (ID ${a.documentNumber})` : ""}`,
         `on ${stamp(a.at, "en")} (Guayaquil time) from IP ${a.ip || "-"}`,
       ]
     : [
-        `Aceptado electrónicamente por ${a.name} (documento ${a.documentNumber})`,
+        `Aceptado electrónicamente por ${a.name}${a.documentNumber ? ` (documento ${a.documentNumber})` : ""}`,
         `el ${stamp(a.at, "es")} (hora de Guayaquil) desde la IP ${a.ip || "-"}`,
       ];
   doc.save();

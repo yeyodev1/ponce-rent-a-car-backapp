@@ -5,7 +5,13 @@ import * as contractService from "../services/contract.service";
 import { renderContractPdf } from "../services/contractPdf.service";
 import { accessToken, requestMeta } from "./booking.controller";
 
-async function sendPdf(res: Response, data: Awaited<ReturnType<typeof contractService.contractForPdf>>, inline: boolean) {
+/** `withHash`: la huella SHA-256 solo va en el PDF del panel; el cliente no ve códigos técnicos. */
+async function sendPdf(
+  res: Response,
+  data: Awaited<ReturnType<typeof contractService.contractForPdf>>,
+  inline: boolean,
+  withHash: boolean,
+) {
   const { reservation, view } = data;
   const pdf = await renderContractPdf({
     code: reservation.code,
@@ -14,7 +20,7 @@ async function sendPdf(res: Response, data: Awaited<ReturnType<typeof contractSe
     text: view.text,
     language: view.language,
     signed: view.status === "signed",
-    hash: view.hash,
+    hash: withHash ? view.hash : null,
     acceptance: view.acceptance,
   });
   const suffix = view.status === "signed" ? "" : "-borrador";
@@ -40,7 +46,7 @@ export async function getPublic(req: Request, res: Response, next: NextFunction)
   }
 }
 
-/** POST /api/public/reservations/:code/contract/accept?t= — { name, documentNumber, accepted: true } */
+/** POST /api/public/reservations/:code/contract/accept?t= — { accepted: true, name?, documentNumber? } */
 export async function accept(req: Request, res: Response, next: NextFunction) {
   try {
     res
@@ -57,7 +63,7 @@ export async function accept(req: Request, res: Response, next: NextFunction) {
 export async function publicPdf(req: Request, res: Response, next: NextFunction) {
   try {
     const data = await contractService.contractForPdf({ code: String(req.params.code), token: accessToken(req) });
-    await sendPdf(res, data, req.query.inline === "1");
+    await sendPdf(res, data, req.query.inline === "1", false);
   } catch (error) {
     next(error);
   }
@@ -80,7 +86,7 @@ export async function adminGet(req: Request, res: Response, next: NextFunction) 
 export async function adminPdf(req: Request, res: Response, next: NextFunction) {
   try {
     const data = await contractService.contractForPdf({ id: String(req.params.id) });
-    await sendPdf(res, data, false);
+    await sendPdf(res, data, false, true);
   } catch (error) {
     next(error);
   }

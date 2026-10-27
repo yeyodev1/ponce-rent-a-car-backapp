@@ -74,8 +74,14 @@ const STATIC_ROUTES = [
   "/guias-de-viaje",
   "/preguntas-frecuentes",
   "/socio-sobre-ruedas",
+  "/socio-propietario",
+  "/trabaja-con-nosotros",
   "/ponces-renaissance",
   "/contacto",
+  "/terminos-y-condiciones",
+  "/politica-de-privacidad",
+  "/politica-de-cookies",
+  "/politica-de-cancelacion",
 ];
 
 function xmlEscape(value: string): string {

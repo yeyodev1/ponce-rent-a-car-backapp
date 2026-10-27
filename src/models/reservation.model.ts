@@ -26,6 +26,19 @@ export interface IPriceLine {
   key: string;
   label: I18nText;
   amount: number;
+  /** true = el valor se cotiza aparte (p. ej. entrega en otra dirección); amount queda en 0. */
+  pending?: boolean;
+}
+
+export const BILLING_TYPES = ["final", "invoice"] as const;
+export type BillingType = (typeof BILLING_TYPES)[number];
+
+/** Datos de facturación: consumidor final (precio del paso 1) o factura con datos (+ IVA). */
+export interface IBilling {
+  type: BillingType;
+  name: string;
+  idNumber: string;
+  address: string;
 }
 
 /**
@@ -42,6 +55,8 @@ export interface IPricing {
   guaranteeAmount: number;
   includedKm: number | null;
   extraKmPrice: number;
+  /** Conceptos que se cotizan aparte al coordinar la entrega (texto en español). */
+  pendingItems: string[];
 }
 
 export interface IReservation {
@@ -64,6 +79,7 @@ export interface IReservation {
   mileage: "limited" | "unlimited";
   coverage: string;
   extras: { code: string; quantity: number }[];
+  billing: IBilling;
   pricing: IPricing;
   amountPaid: number;
   balance: number;
@@ -114,7 +130,22 @@ export interface IReservation {
 }
 
 const PriceLineSchema = new Schema<IPriceLine>(
-  { key: String, label: { type: I18nTextSchema, default: () => ({}) }, amount: Number },
+  {
+    key: String,
+    label: { type: I18nTextSchema, default: () => ({}) },
+    amount: Number,
+    pending: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
+
+export const BillingSchema = new Schema<IBilling>(
+  {
+    type: { type: String, enum: BILLING_TYPES, default: "final" },
+    name: { type: String, default: "" },
+    idNumber: { type: String, default: "" },
+    address: { type: String, default: "" },
+  },
   { _id: false },
 );
 
@@ -136,12 +167,13 @@ const reservationSchema = new Schema<IReservation>(
     pickupLocation: { type: String, required: true },
     returnLocation: { type: String, required: true },
     pickupAddress: { type: String, default: "" },
-    mileage: { type: String, enum: ["limited", "unlimited"], default: "limited" },
+    mileage: { type: String, enum: ["limited", "unlimited"], default: "unlimited" },
     coverage: { type: String, default: "standard" },
     extras: {
       type: [new Schema({ code: String, quantity: { type: Number, default: 1 } }, { _id: false })],
       default: [],
     },
+    billing: { type: BillingSchema, default: () => ({ type: "final" }) },
     pricing: {
       days: Number,
       currency: { type: String, default: "USD" },
@@ -152,6 +184,7 @@ const reservationSchema = new Schema<IReservation>(
       guaranteeAmount: Number,
       includedKm: { type: Number, default: null },
       extraKmPrice: Number,
+      pendingItems: { type: [String], default: [] },
     },
     amountPaid: { type: Number, default: 0 },
     balance: { type: Number, default: 0 },

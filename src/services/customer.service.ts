@@ -47,6 +47,37 @@ export async function adminUpdateCustomer(id: string, body: any) {
   }
   if (body?.email !== undefined) customer.email = parseEmail(body.email);
   if (body?.phone !== undefined) customer.phone = requireE164(body.phone);
+  // Cédula o pasaporte: el personal los completa tras revisar las fotos del cliente.
+  if (body?.documentType !== undefined) {
+    if (!["cedula", "passport"].includes(String(body.documentType))) {
+      throw new CustomError("El tipo de documento debe ser cédula o pasaporte", 400);
+    }
+    customer.documentType = String(body.documentType) as "cedula" | "passport";
+  }
+  if (body?.documentNumber !== undefined) {
+    const documentNumber = String(body.documentNumber ?? "")
+      .replace(/[\s.-]/g, "")
+      .toUpperCase();
+    if (documentNumber && customer.documentType === "cedula" && !/^\d{10}$/.test(documentNumber)) {
+      throw new CustomError("La cédula debe tener 10 dígitos", 400);
+    }
+    if (documentNumber && customer.documentType === "passport" && !/^[A-Z0-9]{5,20}$/.test(documentNumber)) {
+      throw new CustomError("El número de pasaporte no es válido", 400);
+    }
+    if (documentNumber) {
+      const other = await Customer.findOne({
+        _id: { $ne: customer._id },
+        documentType: customer.documentType,
+        documentNumber,
+      })
+        .select("_id name")
+        .lean<any>();
+      if (other) {
+        throw new CustomError(`Ese documento ya pertenece al cliente ${other.name}`, 409);
+      }
+    }
+    customer.documentNumber = documentNumber;
+  }
   // Vacío = borrar el dato (p. ej. una licencia mal cargada que el cliente traerá en persona).
   if (body?.licenseNumber !== undefined) {
     customer.licenseNumber = String(body.licenseNumber ?? "").trim()

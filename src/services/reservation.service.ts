@@ -8,7 +8,9 @@ import { CustomerDocument } from "../models/document.model";
 import { Lead } from "../models/lead.model";
 import { Payment } from "../models/payment.model";
 import {
+  BILLING_TYPES,
   BLOCKING_STATUSES,
+  IBilling,
   RESERVATION_STATUSES,
   Reservation,
   VERIFICATION_STATUSES,
@@ -132,6 +134,7 @@ export async function publicView(reservation: any) {
     mileage: reservation.mileage,
     coverage: reservation.coverage,
     extras: reservation.extras,
+    billing: reservation.billing ?? { type: "final", name: "", idNumber: "", address: "" },
     pricing: reservation.pricing,
     amountPaid: reservation.amountPaid,
     balance: reservation.balance,
@@ -158,8 +161,12 @@ export async function getPublicReservation(code: string, token: string) {
 // Crear reserva (Ruta B)
 // ---------------------------------------------------------------------------
 
-/** `requireLicense`: la web la exige; la presencial la valida solo si llega. */
-function parseDriver(raw: any, requireLicense: boolean) {
+/**
+ * Datos mínimos del conductor: nombre, correo, celular y país. El documento y la
+ * licencia son opcionales (la web ya no los pide: el personal los completa al
+ * revisar las fotos); si llegan, se validan.
+ */
+function parseDriver(raw: any) {
   const d = raw ?? {};
   const name = String(d.name ?? "").trim();
   const documentType = d.documentType === "passport" ? "passport" : "cedula";
@@ -174,10 +181,10 @@ function parseDriver(raw: any, requireLicense: boolean) {
     throw new CustomError("El tipo de documento debe ser cédula o pasaporte", 400);
   }
   if (name.length < 3) throw new CustomError("Escribe el nombre completo del conductor", 400);
-  if (documentType === "cedula" && !/^\d{10}$/.test(documentNumber)) {
+  if (documentNumber && documentType === "cedula" && !/^\d{10}$/.test(documentNumber)) {
     throw new CustomError("La cédula debe tener 10 dígitos", 400);
   }
-  if (documentType === "passport" && !/^[A-Z0-9]{5,20}$/.test(documentNumber)) {
+  if (documentNumber && documentType === "passport" && !/^[A-Z0-9]{5,20}$/.test(documentNumber)) {
     throw new CustomError("El número de pasaporte no es válido", 400);
   }
   if (!EMAIL.test(email)) throw new CustomError("Escribe un correo válido", 400);
@@ -196,8 +203,50 @@ function parseDriver(raw: any, requireLicense: boolean) {
     phone,
     country,
     birthDate: String(d.birthDate ?? "").trim(),
-    license: parseDriverLicense(d, country, requireLicense),
+    license: parseDriverLicense(d, country, false),
   };
+}
+
+/** Facturación: consumidor final por defecto; con factura se exigen nombre y RUC/cédula. */
+export function parseBilling(raw: any): IBilling {
+  const b = raw && typeof raw === "object" ? raw : {};
+  const type = b.type === undefined || b.type === null || b.type === "" ? "final" : String(b.type);
+  if (!(BILLING_TYPES as readonly string[]).includes(type)) {
+    throw new CustomError("El tipo de facturación debe ser consumidor final o factura con datos", 400);
+  }
+  const text = (v: unknown, max: number) =>
+    String(v ?? "")
+      .trim()
+      .slice(0, max);
+  const billing: IBilling = {
+    type: type as IBilling["type"],
+    name: text(b.name, 200),
+    idNumber: text(b.idNumber, 30).replace(/[\s.]/g, "").toUpperCase(),
+    address: text(b.address, 300),
+  };
+  if (billing.type === "invoice") {
+    if (billing.name.length < 3) throw new CustomError("Escribe la razón social o el nombre para la factura", 400);
+    if (!/^[A-Z0-9-]{5,20}$/.test(billing.idNumber)) {
+      throw new CustomError("Escribe el RUC o la cédula para la factura", 400);
+    }
+  } else {
+    billing.name = "";
+    billing.idNumber = "";
+    billing.address = "";
+  }
+  return billing;
+}
+
+/** El cliente se reconoce por documento si lo trae; si no, por correo. */
+async function findCustomerFor(driver: ReturnType<typeof parseDriver>) {
+  if (driver.documentNumber) {
+    const byDocument = await Customer.findOne({
+      documentType: driver.documentType,
+      documentNumber: driver.documentNumber,
+    });
+    if (byDocument) return byDocument;
+  }
+  return Customer.findOne({ email: driver.email }).sort({ createdAt: 1 });
 }
 
 function parseAttribution(raw: any): Record<string, string> {
@@ -209,27 +258,36 @@ function parseAttribution(raw: any): Record<string, string> {
 }
 
 async function upsertCustomer(driver: ReturnType<typeof parseDriver>, language: "es" | "en") {
-  const filter = { documentType: driver.documentType, documentNumber: driver.documentNumber };
-  const update = {
-    $set: {
-      name: driver.name,
-      email: driver.email,
-      phone: driver.phone,
-      country: driver.country,
-      language,
-      ...(driver.birthDate ? { birthDate: driver.birthDate } : {}),
-      ...(driver.license ?? {}),
-    },
+  const set: Record<string, unknown> = {
+    name: driver.name,
+    email: driver.email,
+    phone: driver.phone,
+    country: driver.country,
+    language,
+    ...(driver.birthDate ? { birthDate: driver.birthDate } : {}),
+    ...(driver.license ?? {}),
   };
+  // El documento solo se escribe si llegó: nunca se borra uno ya cargado por el personal.
+  if (driver.documentNumber) {
+    set.documentType = driver.documentType;
+    set.documentNumber = driver.documentNumber;
+  }
+  const existing = await findCustomerFor(driver);
   try {
-    return await Customer.findOneAndUpdate(filter, update, {
-      upsert: true,
-      new: true,
-      runValidators: true,
-    });
+    if (existing) {
+      return (await Customer.findByIdAndUpdate(existing._id, { $set: set }, { new: true, runValidators: true }))!;
+    }
+    return await Customer.create({ documentType: driver.documentType, ...set });
   } catch (error: any) {
-    // Dos reservas simultáneas del mismo cliente: una gana el insert, la otra actualiza.
-    if (error?.code === 11000) return Customer.findOneAndUpdate(filter, update, { new: true });
+    // Carrera (dos reservas a la vez) o documento ya cargado en otro cliente: se usa ese.
+    if (error?.code === 11000) {
+      const winner = await findCustomerFor(driver);
+      if (winner) {
+        const { documentType: _t, documentNumber: _n, ...safe } = set;
+        void [_t, _n];
+        return (await Customer.findByIdAndUpdate(winner._id, { $set: safe }, { new: true }))!;
+      }
+    }
     throw error;
   }
 }
@@ -330,6 +388,7 @@ function baseReservationData(
     mileage: input.mileage,
     coverage: input.coverage,
     extras: input.extras,
+    billing: parseBilling(body?.billing),
     pricing,
     amountPaid: 0,
     balance: pricing.total,
@@ -345,16 +404,14 @@ export async function createReservation(
   meta: RequestMeta,
 ): Promise<{ created: boolean; reservation: ReturnType<typeof createResponse> }> {
   const input = parseQuoteInput(body);
-  const driver = parseDriver(body?.driver, true);
+  const driver = parseDriver(body?.driver);
   assertLicenseCovers(driver.license, input.returnAt);
+  parseBilling(body?.billing);
   const language: "es" | "en" = body?.language === "en" ? "en" : "es";
 
   // Anti-duplicado antes de cotizar: la reserva existente ocupa la unidad y la
   // cotización diría "sin disponibilidad" a quien solo recargó la página.
-  const existingCustomer = await Customer.findOne({
-    documentType: driver.documentType,
-    documentNumber: driver.documentNumber,
-  }).lean<any>();
+  const existingCustomer = await findCustomerFor(driver);
   if (existingCustomer) {
     const duplicate = await Reservation.findOne({
       ...activeReservationFilter(),
@@ -420,7 +477,7 @@ export async function createReservation(
  */
 export async function adminCreateReservation(body: any, staff: StaffRef) {
   const input = parseQuoteInput(body);
-  const driver = parseDriver(body?.driver, false);
+  const driver = parseDriver(body?.driver);
   assertLicenseCovers(driver.license, input.returnAt);
   const language: "es" | "en" = body?.language === "en" ? "en" : "es";
   const computed = await quoteForBooking(input, "staff");

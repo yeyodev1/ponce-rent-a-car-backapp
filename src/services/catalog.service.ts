@@ -161,6 +161,8 @@ const CATEGORY_FIELDS = [
   "transmission",
   "airConditioning",
   "pricePerDay",
+  "guarantee",
+  "mileage",
   "image",
   "gallery",
   "exampleModels",
@@ -170,8 +172,37 @@ const CATEGORY_FIELDS = [
   "seo",
 ] as const;
 
+const MILEAGE_FIELDS = [
+  "limitedKmPerDay",
+  "extraKmPrice",
+  "unlimitedPricePerDay",
+  "limitedDiscountPerDay",
+] as const;
+
+/** null = usar la configuración general; objeto = reglas propias de la categoría. */
+function categoryMileage(raw: unknown) {
+  if (raw === null || raw === undefined || raw === "") return null;
+  if (typeof raw !== "object") throw new CustomError("El kilometraje de la categoría no es válido", 400);
+  const m = pick(raw, MILEAGE_FIELDS) as Record<string, unknown>;
+  const out = {
+    limitedKmPerDay: m.limitedKmPerDay ?? 150,
+    extraKmPrice: m.extraKmPrice ?? 0,
+    unlimitedPricePerDay: m.unlimitedPricePerDay ?? 0,
+    limitedDiscountPerDay: m.limitedDiscountPerDay ?? 0,
+  };
+  if (!Number.isInteger(out.limitedKmPerDay) || (out.limitedKmPerDay as number) < 0) {
+    throw new CustomError("Los km incluidos por día deben ser un entero mayor o igual a 0", 400);
+  }
+  assertCents(out.extraKmPrice, "El precio por km adicional");
+  assertCents(out.unlimitedPricePerDay, "El precio del kilometraje ilimitado");
+  assertCents(out.limitedDiscountPerDay, "El ahorro del kilometraje limitado");
+  return out;
+}
+
 function categoryData(body: any, isCreate: boolean) {
   const data = pick(body, CATEGORY_FIELDS);
+  assertCents(data.guarantee, "La garantía");
+  if (data.mileage !== undefined) data.mileage = categoryMileage(data.mileage);
   if (isCreate && !data.slug) data.slug = slugify(String(body?.name?.es ?? ""));
   if (data.slug !== undefined) {
     data.slug = slugify(String(data.slug));
@@ -621,11 +652,17 @@ export async function adminUpdateSettings(body: any) {
       // Se mezcla con lo guardado: updateSettings reemplaza el subobjeto completo.
       const mileage = {
         ...current.booking.mileage,
-        ...pick(b.mileage, ["limitedKmPerDay", "extraKmPrice", "unlimitedPricePerDay"]),
+        ...pick(b.mileage, [
+          "limitedKmPerDay",
+          "extraKmPrice",
+          "unlimitedPricePerDay",
+          "limitedDiscountPerDay",
+        ]),
       };
       assertNonNegativeInt(mileage.limitedKmPerDay, "Los km incluidos por día");
       assertCents(mileage.extraKmPrice, "El precio por km adicional");
       assertCents(mileage.unlimitedPricePerDay, "El precio del kilometraje ilimitado");
+      assertCents(mileage.limitedDiscountPerDay, "El ahorro del kilometraje limitado");
       booking.mileage = mileage;
     }
 
