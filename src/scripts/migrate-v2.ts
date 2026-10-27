@@ -4,7 +4,8 @@
  *
  * - Categorías: nombres, frase corta, precio por día, pasajeros y garantía por
  *   categoría (sin tocar imágenes, galerías ni descripciones).
- * - Configuración: la reserva en línea se asegura con el 30% del total.
+ * - Configuración: la reserva en línea se asegura con el 30% del total; el
+ *   kilometraje ilimitado queda incluido y el limitado ahorra $5 por día.
  * - Clientes: el índice único por documento pasa a ser parcial (la web ya no
  *   exige cédula al reservar) y se indexa el correo.
  * - Reservas existentes: no se tocan (conservan su kilometraje y su precio congelado).
@@ -99,11 +100,20 @@ async function migrateCategories() {
 async function migrateSettings() {
   const res = await Setting.updateOne(
     { key: "main" },
-    { $set: { "booking.depositMode": "percent", "booking.depositValue": 30 } },
+    {
+      $set: {
+        "booking.depositMode": "percent",
+        "booking.depositValue": 30,
+        // Kilometraje ilimitado incluido en la tarifa; el limitado es la opción
+        // para ahorrar ($5 por día, editable en el panel).
+        "booking.mileage.unlimitedPricePerDay": 0,
+        "booking.mileage.limitedDiscountPerDay": 500,
+      },
+    },
   );
   console.log(
     res.matchedCount
-      ? "✔ Configuración: la reserva en línea se asegura con el 30% del total"
+      ? "✔ Configuración: reserva con el 30%, kilometraje ilimitado incluido y limitado con ahorro de $5/día"
       : "  · no hay configuración guardada todavía (se creará con los nuevos valores por defecto)",
   );
 }
