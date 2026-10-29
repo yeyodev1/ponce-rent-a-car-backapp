@@ -2,6 +2,7 @@ import { CustomError } from "../errors/customError.error";
 import { Category } from "../models/category.model";
 import { Coverage } from "../models/coverage.model";
 import { Extra } from "../models/extra.model";
+import { Promotion } from "../models/content.model";
 import { BILLING_TYPES, BillingType, IPriceLine, IPricing } from "../models/reservation.model";
 import { ISetting } from "../models/setting.model";
 import { I18nText } from "../models/shared.schema";
@@ -84,7 +85,7 @@ export interface QuoteInput {
   coverage: string;
   extras: QuoteExtraInput[];
   promoCode: string;
-  /** final = consumidor final (precio del paso 1); invoice = factura con datos (+ IVA 15%). */
+  /** final = consumidor final (precio del paso 1); invoice = factura con datos (+ IVA). */
   billingType: BillingType;
 }
 
@@ -422,13 +423,18 @@ export async function computeQuote(
     ...(pendingLocation ? { pending: true } : {}),
   });
 
+  // Promo elegida desde /promociones: se descuenta antes del IVA. Si todavía no
+  // aplica (p. ej. 7x6 con menos de 7 días) se muestra en $0 con la condición.
+  const promoLine = await promotionLine(input, category, days, locationFee);
+  if (promoLine) lines.push(promoLine);
+
   // Factura con datos: se suma el IVA sobre todo lo anterior. Consumidor final
   // conserva el precio que vio desde el paso 1 (simplificada).
   const subtotal = lines.reduce((sum, l) => sum + Math.round(l.amount), 0);
   if (input.billingType === "invoice") {
     lines.push({
       key: "tax",
-      label: { es: "IVA 15%", en: "VAT 15%" },
+      label: { es: "IVA", en: "VAT" },
       amount: Math.round(subtotal * TAX_RATE),
     });
   }
@@ -494,6 +500,50 @@ export async function computeQuote(
     quote,
     pricing,
   };
+}
+
+/** Línea de descuento de la promo vigente (o null si no hay o no corresponde a la categoría). */
+async function promotionLine(
+  input: QuoteInput,
+  category: any,
+  days: number,
+  locationFee: number,
+): Promise<IPriceLine | null> {
+  if (!input.promoCode) return null;
+  const now = new Date();
+  const promo = await Promotion.findOne({
+    slug: input.promoCode.toLowerCase(),
+    isActive: true,
+    $and: [
+      { $or: [{ startsAt: null }, { startsAt: { $lte: now } }] },
+      { $or: [{ endsAt: null }, { endsAt: { $gte: now } }] },
+    ],
+  }).lean<any>();
+  const d = promo?.discount;
+  if (!promo || !d || d.type === "none") return null;
+  if (promo.categorySlug && promo.categorySlug !== category.slug) return null;
+
+  const minDays = Math.max(1, Number(d.minDays) || 1);
+  const rental = category.pricePerDay * days;
+  let amount = 0;
+  if (days >= minDays) {
+    if (d.type === "percent") amount = Math.round((rental * Math.min(100, d.value)) / 100);
+    else if (d.type === "fixed") amount = Math.min(d.value, rental);
+    else if (d.type === "free_days") amount = Math.floor(days / minDays) * d.value * category.pricePerDay;
+    else if (d.type === "free_delivery") amount = locationFee;
+  }
+  const title = { es: promo.title?.es || promo.slug, en: promo.title?.en || promo.title?.es || promo.slug };
+  if (days < minDays) {
+    return {
+      key: "promo",
+      label: {
+        es: `Promoción «${title.es}»: aplica desde ${minDays} días`,
+        en: `“${title.en}” offer: applies from ${minDays} days`,
+      },
+      amount: 0,
+    };
+  }
+  return { key: "promo", label: { es: `Promoción: ${title.es}`, en: `Offer: ${title.en}` }, amount: -amount };
 }
 
 /** POST /public/quote: no guarda nada. */

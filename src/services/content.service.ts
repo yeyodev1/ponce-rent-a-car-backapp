@@ -3,7 +3,7 @@ import { env } from "../config/env";
 import { listVehiclesForSitemap } from "./vehiclePublic.service";
 import { CustomError } from "../errors/customError.error";
 import { Category } from "../models/category.model";
-import { Faq, FAQ_TOPICS, Guide, Hotel, Promotion, SeoPage } from "../models/content.model";
+import { Faq, FAQ_TOPICS, Guide, Hotel, PROMO_DISCOUNT_TYPES, Promotion, SeoPage } from "../models/content.model";
 import { slugify } from "../utils/slugify";
 import { escapeRegex, parsePaging } from "./lead.service";
 
@@ -11,7 +11,7 @@ import { escapeRegex, parsePaging } from "./lead.service";
 /* Público                                                             */
 /* ------------------------------------------------------------------ */
 
-const PROMOTION_FIELDS = "slug title body conditions image startsAt endsAt categorySlug ctaLabel ctaUrl badge order";
+const PROMOTION_FIELDS = "slug title body conditions image startsAt endsAt categorySlug discount ctaLabel ctaUrl badge order";
 const HOTEL_FIELDS = "slug name zone description benefit promotion image website phone order";
 const GUIDE_LIST_FIELDS = "slug title excerpt cover readingMinutes destination distanceKm driveTime publishedAt";
 
@@ -170,6 +170,21 @@ function withSlug(out: Body, body: Body, isCreate: boolean, source: string): Bod
   return out;
 }
 
+function promoDiscount(v: unknown) {
+  const d = (v && typeof v === "object" ? v : {}) as Record<string, unknown>;
+  const type = String(d.type ?? "none");
+  if (!(PROMO_DISCOUNT_TYPES as readonly string[]).includes(type)) {
+    throw new CustomError("El tipo de descuento de la promoción no es válido", 400);
+  }
+  const value = Math.max(0, Math.round(Number(d.value) || 0));
+  if (type === "percent" && value > 100) throw new CustomError("El porcentaje no puede pasar de 100", 400);
+  if ((type === "percent" || type === "fixed" || type === "free_days") && !value) {
+    throw new CustomError("Indica el valor del descuento de la promoción", 400);
+  }
+  const minDays = Math.max(1, Math.round(Number(d.minDays) || 1));
+  return { type, value, minDays };
+}
+
 const normalizePromotion: Normalizer = (body, isCreate) => {
   const out = pick(body, {
     title: (v) => i18n(v, 200),
@@ -180,6 +195,7 @@ const normalizePromotion: Normalizer = (body, isCreate) => {
     ctaUrl: (v) => str(v, 300),
     image: (v) => str(v, 1000),
     categorySlug: (v) => str(v, 80).toLowerCase(),
+    discount: (v) => promoDiscount(v),
     startsAt: (v) => optionalDate(v, "La fecha de inicio"),
     endsAt: (v) => optionalDate(v, "La fecha de fin"),
     isActive: (v) => v === true || v === "true",

@@ -705,6 +705,8 @@ const promotions = [
       "Valid for rentals of 7 consecutive days or more, subject to availability. Cannot be combined with other offers.",
     ),
     badge: t("7x6", "7x6"),
+    // Un día gratis por cada 7 de alquiler, aplicado en la cotización.
+    discount: { type: "free_days", value: 1, minDays: 7 },
     ctaLabel: t("Reservar ahora", "Book now"),
     ctaUrl: "/reservar",
   },
@@ -722,6 +724,7 @@ const promotions = [
       "Valid for deliveries at Guayaquil Airport arranged at least 24 hours in advance. Subject to availability.",
     ),
     badge: t("Aeropuerto", "Airport"),
+    discount: { type: "free_delivery", value: 0, minDays: 1 },
     ctaLabel: t("Ayúdame a elegir", "Help me choose"),
     ctaUrl: "/ayudame-a-elegir",
   },

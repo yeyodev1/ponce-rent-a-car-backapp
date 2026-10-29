@@ -3,6 +3,21 @@ import { I18nText, I18nTextSchema, SeoFields, SeoSchema } from "./shared.schema"
 
 /** Modelos de contenido administrable: promociones, hoteles, guías, FAQs y SEO. */
 
+/**
+ * Cómo descuenta la promo en la cotización: porcentaje o monto fijo sobre el
+ * alquiler, días gratis cada `minDays` (7x6 = 1 gratis cada 7) o entrega gratis.
+ */
+export const PROMO_DISCOUNT_TYPES = ["none", "percent", "fixed", "free_days", "free_delivery"] as const;
+export type PromoDiscountType = (typeof PROMO_DISCOUNT_TYPES)[number];
+
+export interface IPromoDiscount {
+  type: PromoDiscountType;
+  /** percent: 0–100 · fixed: centavos · free_days: días gratis por bloque. */
+  value: number;
+  /** Días mínimos de alquiler para aplicar (y tamaño del bloque en free_days). */
+  minDays: number;
+}
+
 export interface IPromotion {
   slug: string;
   title: I18nText;
@@ -13,11 +28,21 @@ export interface IPromotion {
   ctaUrl: string;
   image: string;
   categorySlug: string;
+  discount: IPromoDiscount;
   startsAt: Date | null;
   endsAt: Date | null;
   isActive: boolean;
   order: number;
 }
+
+const promoDiscountSchema = new Schema<IPromoDiscount>(
+  {
+    type: { type: String, enum: PROMO_DISCOUNT_TYPES, default: "none" },
+    value: { type: Number, default: 0, min: 0 },
+    minDays: { type: Number, default: 1, min: 1 },
+  },
+  { _id: false },
+);
 
 const promotionSchema = new Schema<IPromotion>(
   {
@@ -30,6 +55,7 @@ const promotionSchema = new Schema<IPromotion>(
     ctaUrl: { type: String, default: "" },
     image: { type: String, default: "" },
     categorySlug: { type: String, default: "" },
+    discount: { type: promoDiscountSchema, default: () => ({}) },
     startsAt: { type: Date, default: null },
     endsAt: { type: Date, default: null },
     isActive: { type: Boolean, default: true },
